@@ -39,9 +39,9 @@ python eval.py
 
 Base vocabulary includes all letters, numbers are added as UNKs.
 
--First line is what model sees during inference/training;
--Second line is for used for dynamic vocab during generation;
--Third line is model's output;
+- First line is what model sees during inference/training;
+- Second line is for used for dynamic vocab during generation;
+- Third line is model's output;
 
 
     ********************
