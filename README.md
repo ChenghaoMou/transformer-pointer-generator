@@ -37,9 +37,12 @@ python eval.py
 
 # Visualization
 
-First line is what model sees during inference/training;
-Second line is for used for dynamic vocab during generation;
-Third line is model's output;
+Base vocabulary includes all letters, numbers are added as UNKs.
+
+-First line is what model sees during inference/training;
+-Second line is for used for dynamic vocab during generation;
+-Third line is model's output;
+
 
     ********************
     <UNK> V E <UNK> w W <UNK> C u x n D c A w v <UNK> L A t r L f o g Z k <UNK> l E
