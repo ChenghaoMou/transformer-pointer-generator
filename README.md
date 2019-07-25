@@ -16,22 +16,22 @@ It supports:
 # Simple Copy Task
 
 ## Preprocess
-Output *random.data* stores base vocabulary and all corpora.
+Output *data/random.data* stores base vocabulary and all corpora.
 
 ```bash
-python preprocess.py --train_src random.src --train_tgt random.tgt --valid_src random.src --valid_tgt random.tgt --save_data random.data --src_vocab random.vocab --tgt_vocab random.vocab
+python preprocess.py --train_src data/random.src --train_tgt data/random.tgt --valid_src data/random.src --valid_tgt data/random.tgt --save_data data/random.data --src_vocab data/random.vocab --tgt_vocab data/random.vocab
 ```
 
 ## Train
 
 ```bash
-python train.py --data random.data --model tfm --layers 2 --batch_size 500 --steps 300 --valid_steps 100 --save_steps 100 --device cuda
+python train.py --data data/random.data --model tfm --layers 2 --batch_size 500 --steps 300 --valid_steps 100 --save_steps 100 --device cuda
 ```
 
 ## Translate
 
 ```bash
-python eval.py --test_src random.src --test_tgt random.tgt --model tfm-300.pt
+python eval.py --test_src data/random.src --test_tgt data/random.tgt --model tfm-300.pt
 
 ```
 
