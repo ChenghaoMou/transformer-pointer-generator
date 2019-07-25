@@ -109,7 +109,7 @@ class Batch:
         return tgt_mask
 
     @staticmethod
-    def from_dataset(dataset, base_vocab, batch_size=4096, shuffled=True, device='cpu'):
+    def from_dataset(dataset, base_vocab, batch_size=4096, shuffled=True, device='cpu', max_len=256):
 
         # sort by src length
         dataset = sorted(dataset, key=lambda x: len(x[0]))
@@ -118,7 +118,7 @@ class Batch:
         curr_batch = []
         curr_max_len = 0
         while i < len(dataset):
-            curr_batch.append(dataset[i])
+            curr_batch.append([dataset[i][0][:max_len], dataset[i][1][:max_len]])
             curr_max_len = max(curr_max_len, len(dataset[i][0]))
             if curr_max_len * len(curr_batch) > batch_size:
                 yield Batch.from_batch_dataset(curr_batch, curr_max_len, base_vocab, shuffled, device)
