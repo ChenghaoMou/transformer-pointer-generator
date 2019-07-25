@@ -184,13 +184,13 @@ if __name__ == "__main__":
     eval_loss =  float('inf')
     curr_loss = float('inf')
 
+    pbar = tqdm(range(args['--steps']))
+    
     while step <= args['--steps']:
 
         data_iterator = Batch.from_dataset(train_dataset, base_vocab, batch_size=args['--batch_size'], device=device)
 
-        pbar = tqdm(data_iterator)
-
-        for j, batch in enumerate(pbar):
+        for j, batch in enumerate(data_iterator):
 
             loss, num_tokens = run_batch(batch, model, CopyGeneratorLossCompute(model.generator, criterion, model_opt))
             step += 1
@@ -224,3 +224,5 @@ if __name__ == "__main__":
                         'base_vocab': base_vocab
                     }
                 }, f"{args['--model']}-{step}.pt")
+
+            pbar.update(1)
