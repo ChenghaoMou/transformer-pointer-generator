@@ -195,6 +195,8 @@ if __name__ == "__main__":
             loss, num_tokens = run_batch(batch, model, CopyGeneratorLossCompute(model.generator, criterion, model_opt))
             step += 1
 
+            pbar.set_description('Train loss: {:.2f}'.format(loss))
+
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
                 model.eval()
                 curr_loss = run_epoch(Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
