@@ -1,15 +1,25 @@
-import operator
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from queue import PriorityQueue
-from torch.autograd import Variable
-from model import subsequent_mask
-from tqdm import tqdm
+"""Training script.
+
+Usage:
+  train.py (-h | --help)
+  train.py --test_src=TEST_SRC --model=MODEL [--test_tgt=TEST_TGT]
+
+Options:
+  -h --help                 Show this screen.
+  --test_src=TEST_SRC       Test source file.
+  --test_tgt=TEST_TGT       Test target file.
+  --model=MODEL             Checkpoint prefix [default: model].
+
+"""
+from docopt import docopt
+from schema import Schema, Or, Use, SchemaError
 import copy
-from train import make_model
-from load import *
+import operator
 import pickle
+from queue import PriorityQueue
+
+from load import *
+from train import make_model
 
 
 class BeamSearchNode(object):
@@ -44,7 +54,7 @@ class BeamSearchNode(object):
         return self.eval() >= other.eval()
 
 
-def greedy_decode(model, batch, max_len=30, start_symbol=1, device='cpu'):
+def greedy_decode(model, batch, max_len=30, start_symbol=1):
     batch_size = batch.src.size(0)
     memory = model.encode(batch.src, batch.src_mask)
     ys = torch.ones(batch_size, 1).fill_(start_symbol).type_as(batch.src.data)
@@ -69,7 +79,7 @@ def greedy_decode(model, batch, max_len=30, start_symbol=1, device='cpu'):
     return pred.cpu().numpy().tolist()[0]
 
 
-def beam_decode(model, batch, max_len=30, start_symbol=1, device='cpu', beam=2, topk=1):
+def beam_decode(model, batch, max_len=30, start_symbol=1, beam=2, topk=1):
     batch_size = batch.src.size(0)
     memory = model.encode(batch.src, batch.src_mask)
     prediction = []
@@ -115,7 +125,8 @@ def beam_decode(model, batch, max_len=30, start_symbol=1, device='cpu', beam=2, 
                 next_word = indexes[0, 0, k].item()
                 log_prob = log_probs[0, 0, k].item()
                 next_input = next_word if next_word < len(batch.vocab.token2id) else 3
-                next_input = torch.cat([node.curr_input, torch.ones(1, 1).fill_(next_input).type_as(batch.src.data)], dim=1)
+                next_input = torch.cat([node.curr_input, torch.ones(1, 1).fill_(next_input).type_as(batch.src.data)],
+                                       dim=1)
                 node = BeamSearchNode(node, next_input, next_word, node.log_prob + log_prob, node.length + 1)
 
                 nextnodes.append((-node.eval(), node))
@@ -253,16 +264,45 @@ def beam_decode(model, batch, max_len=30, start_symbol=1, device='cpu', beam=2, 
 #
 
 if __name__ == "__main__":
-    device = 'cpu' if torch.cuda.is_available() else 'cpu'
-    resource = pickle.loads(open("random.data", "rb").read())
-    base_vocab, train_dataset, valid_dataset = resource[
-                                                   'base_vocab'], resource['train_dataset'], resource['valid_dataset']
+
+    args = docopt(__doc__, version='0.1')
+    # print(args)
+
+    schema = Schema({
+        '--help': Or(None, Use(bool)),
+        '--test_src': Use(lambda x: open(x, "r"), error='TEST_SRC should be readable'),
+        '--test_tgt': Or(None, Use(lambda x: open(x, "r"), error='TEST_TGT should be readable')),
+        '--model': Use(str)
+    })
+
+    try:
+        args = schema.validate(args)
+    except SchemaError as e:
+        exit(e)
+
+    # print(args)
+
+    pickled_data = torch.load(args['--model'])
+    model_state, resources, parameters = pickled_data['model'], pickled_data['resources'], pickled_data['parameters']
+    device = parameters['--device']
+
+    base_vocab = resources['base_vocab']
     V = len(base_vocab)
-    model = make_model(V, V, N=2, device=device)
-    model.load_state_dict(torch.load("copy-model.pt"))
+    model = make_model(V, V, N=parameters['--layers'],
+                       d_model=parameters['--d_model'],
+                       d_ff=parameters['--d_ff'],
+                       h=parameters['--heads'],
+                       dropout=parameters['--dropout'],
+                       device=parameters['--device'])
+    model.load_state_dict(model_state)
     model.eval()
-    for batch in Batch.from_dataset(valid_dataset, base_vocab, batch_size=50, device=device):
-        pred = beam_decode(model, batch, start_symbol=1, device=device, max_len=31)
+
+    test_dataset = base_vocab.load_dataset(
+        args['--test_src'], args['--test_tgt']
+    )
+
+    for batch in Batch.from_dataset(test_dataset, base_vocab, batch_size=parameters['--batch_size'], device=device):
+        pred = beam_decode(model, batch, start_symbol=1, max_len=30)
         # print(pred)
         print('*' * 20)
         print(' '.join(batch.vocab.id2token[i] for i in batch.src[0].cpu(

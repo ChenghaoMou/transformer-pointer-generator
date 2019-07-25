@@ -1,12 +1,14 @@
-from dataclasses import dataclass
-from typing import Union, List, Tuple, Optional
-import numpy as np
-from random import shuffle
-from utils import vprint
-from model import subsequent_mask
 from copy import deepcopy
+from random import shuffle
+from typing import Union, List, Tuple, Optional
+
+import numpy as np
 import torch
+from dataclasses import dataclass
 from torch.autograd import Variable
+
+from model import subsequent_mask
+
 
 @dataclass
 class Vocab:
@@ -21,10 +23,10 @@ class Vocab:
                 '<EOS>': 2,
                 '<UNK>': 3,
             }
-        
+
         if self.id2token is None:
             self.id2token = {i: k for k, i in self.token2id.items()}
-    
+
     def load_vocab(self, *vocabs) -> None:
         for vocab in vocabs:
             if vocab is None: continue
@@ -35,11 +37,11 @@ class Vocab:
                     self.id2token[self.token2id[token]] = token
 
     def load_dataset(self,
-        src_file,
-        tgt_file,
-        learn_vocab=False,
-    ) -> List[Tuple]:
-        
+                     src_file,
+                     tgt_file,
+                     learn_vocab=False,
+                     ) -> List[Tuple]:
+
         src = []
         tgt = []
 
@@ -51,7 +53,7 @@ class Vocab:
                     if token not in self.token2id:
                         self.token2id[token] = len(self.token2id)
                         self.id2token[self.token2id[token]] = token
-        
+
         if tgt_file:
             for line in tgt_file:
                 tgt_line = line.strip('\r\n ').split()
@@ -64,36 +66,36 @@ class Vocab:
                             self.id2token[self.token2id[token]] = token
         else:
             tgt.append([])
-        
+
         return list(zip(src, tgt))
-        
+
     def get(self, key, default):
         return self.token2id.get(key, default)
-    
+
     def __getitem__(self, key):
         return self.token2id[key]
-    
+
     def __contains__(self, key):
         return key in self.token2id
-    
+
     def __len__(self):
         return len(self.token2id)
-    
+
     def __setitem__(self, key, value):
         self.token2id[key] = value
         self.id2token[self.token2id[key]] = value
 
+
 @dataclass
 class Batch:
-
     src: Union[List[str], np.ndarray, List[List[int]], torch.LongTensor]
     src_full: Union[List[str], np.ndarray, List[List[int]], torch.LongTensor]
-    src_mask: Optional[torch.LongTensor] = None 
+    src_mask: Optional[torch.LongTensor] = None
     tgt: Union[List[str], np.ndarray, List[List[int]], torch.LongTensor] = None
     tgt_full: Union[List[str], np.ndarray, List[List[int]], torch.LongTensor] = None
     tgt_mask: Optional[torch.LongTensor] = None
     vocab: Vocab = None
-    ext_vocab: Vocab = None 
+    ext_vocab: Vocab = None
 
     def __post_init__(self):
         self.ntokens = (self.tgt != 0).data.sum()
@@ -108,7 +110,7 @@ class Batch:
 
     @staticmethod
     def from_dataset(dataset, base_vocab, batch_size=4096, shuffled=True, device='cpu'):
-        
+
         # sort by src length
         dataset = sorted(dataset, key=lambda x: len(x[0]))
 
@@ -119,13 +121,12 @@ class Batch:
             curr_batch.append(dataset[i])
             curr_max_len = max(curr_max_len, len(dataset[i][0]))
             if curr_max_len * len(curr_batch) > batch_size:
-                
                 yield Batch.from_batch_dataset(curr_batch, curr_max_len, base_vocab, shuffled, device)
                 curr_batch = []
                 curr_max_len = 0
-            
+
             i += 1
-        
+
     @staticmethod
     def from_batch_dataset(curr_batch, curr_max_len, base_vocab, shuffled=True, device='cuda'):
         ext_vocab = deepcopy(base_vocab)
@@ -153,7 +154,7 @@ class Batch:
             src_ids.append(base_vocab['<EOS>'])
             src_full_ids.append(base_vocab['<EOS>'])
 
-            src_tensor[i,:len(src_ids)] = src_ids
+            src_tensor[i, :len(src_ids)] = src_ids
             src_full_tensor[i, :len(src_full_ids)] = src_full_ids
 
             if tgt and tgt_max_len > 0:
@@ -162,13 +163,13 @@ class Batch:
                 for token in tgt:
                     tgt_ids.append(base_vocab.get(token, base_vocab['<UNK>']))
                     tgt_full_ids.append(ext_vocab.get(token, base_vocab['<UNK>']))
-                
+
                 tgt_ids.append(base_vocab['<EOS>'])
                 tgt_full_ids.append(base_vocab['<EOS>'])
 
                 tgt_tensor[i, :len(tgt_ids)] = tgt_ids
-                tgt_full_tensor[i,:len(tgt_full_ids)] = tgt_full_ids
-        
+                tgt_full_tensor[i, :len(tgt_full_ids)] = tgt_full_ids
+
         src_tensor = Variable(torch.from_numpy(
             src_tensor), requires_grad=False).long().to(device)
         src_mask = (src_tensor != 0).unsqueeze(-2).to(device)
@@ -180,22 +181,5 @@ class Batch:
             tgt_full_tensor), requires_grad=False).long().to(device)
         tgt_mask = Batch.make_std_mask(tgt_tensor, 0)
 
-        return Batch(src_tensor, src_full_tensor, src_mask, tgt_tensor, tgt_full_tensor, tgt_mask, base_vocab, ext_vocab)
-            
-
-if __name__ == "__main__":
-
-    base_vocab = Vocab()
-    base_vocab.load_vocab(
-        "temp.vocab"
-    )
-    dataset = base_vocab.load_dataset("temp.src", "temp.tgt")
-    for batch in Batch.from_dataset(dataset, base_vocab, 10, True):
-        vprint(batch.src, batch.src_full, batch.tgt, batch.tgt_full)
-        print('*'*10)
-
-
-
-            
-
-
+        return Batch(src_tensor, src_full_tensor, src_mask, tgt_tensor, tgt_full_tensor, tgt_mask, base_vocab,
+                     ext_vocab)

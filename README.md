@@ -10,7 +10,6 @@ It supports:
 # TODO
 
 
-- OpenNMT-py-like interface
 - Transformer-XL
 - Code Cleanup and comments
 
@@ -20,22 +19,22 @@ It supports:
 Output *random.data* stores base vocabulary and all corpora.
 
 `
-python preprocess.py random.src random.tgt random.data --valid_src random.src --valid_tgt random.tgt --src_vocab random.vocab --tgt_vocab random.vocab
+python preprocess.py --train_src random.src --train_tgt random.tgt --valid_src random.src --valid_tgt random.tgt --save_data random.data --src_vocab random.vocab --tgt_vocab random.vocab
 `
 
 ## Train
 
 `
-python train.py
+python train.py --data random.data --model tfm --layers 2 --batch_size 500 --steps 300 --valid_steps 100 --save_steps 100 --device cuda
 `
 
 ## Translate
 
 `
-python eval.py 
+python eval.py --test_src random.src --test_tgt random.tgt --model tfm-300.pt
 `
 
-# Visualization
+# Result
 
 Base vocabulary includes all letters, numbers are added as UNKs.
 
