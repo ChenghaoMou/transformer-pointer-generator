@@ -1,6 +1,7 @@
 import random
 import string
 
+
 def random_dataset(seq=20, num=2000):
     open('random.vocab', 'w').write('\n'.join(list(string.ascii_letters)))
     with open('random.src', 'w') as src, open('random.tgt', 'w') as tgt:

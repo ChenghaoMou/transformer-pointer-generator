@@ -21,23 +21,17 @@ Options:
   --model=MODEL             Checkpoint prefix [default: model].
 
 """
+import os
+import pickle
+import time
+from collections import deque
+
 from docopt import docopt
 from schema import Schema, Or, Use, SchemaError
-from collections import deque
-import os
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
-import copy
-import time
-from torch.autograd import Variable
-from model import *
 from tqdm import tqdm as tqdm
-from load import Batch, Vocab
-import pickle
 
+from load import Batch
+from model import *
 
 
 def make_model(src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1, device='cpu'):
@@ -61,7 +55,6 @@ def make_model(src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0
 
 
 def run_batch(batch, model, loss_compute, start_symbol=1, name='Train'):
-
     max_len = batch.tgt_full.size(1)
     memory = model.encode(batch.src, batch.src_mask)
     batch_size, seq_len = batch.src.size()
@@ -101,7 +94,6 @@ def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
     total_tokens = 0
     total_loss = 0
 
-
     for j, batch in enumerate(data_iter):
 
         max_len = batch.tgt_full.size(1)
@@ -111,8 +103,7 @@ def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
             start_symbol).type_as(batch.src.data)
         final_out = torch.zeros((batch_size, 1, 512)).to(device)
 
-        for i in range(max_len-1):
-
+        for i in range(max_len - 1):
             ys = Variable(ys)
             tgt_mask = Variable(subsequent_mask(
                 ys.size(1)).type_as(batch.src.data))
@@ -136,7 +127,7 @@ def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
         total_loss += loss
         total_tokens += batch.ntokens
 
-    return total_loss/total_tokens
+    return total_loss / total_tokens
 
 
 if __name__ == "__main__":
@@ -171,8 +162,9 @@ if __name__ == "__main__":
     device = args['--device']
 
     resource = pickle.loads(args['--data'].read())
-    base_vocab, train_dataset, valid_dataset = resource['base_vocab'], resource['train_dataset'], resource['valid_dataset']
-    
+    base_vocab, train_dataset, valid_dataset = resource['base_vocab'], resource['train_dataset'], resource[
+        'valid_dataset']
+
     V = len(base_vocab)
     criterion = LabelSmoothing(size=V, padding_idx=0, smoothing=args['--smooth'])
     model = make_model(V, V, N=args['--layers']).to(args['--device'])
@@ -181,11 +173,11 @@ if __name__ == "__main__":
     step = 0
 
     checkpoints = deque()
-    eval_loss =  float('inf')
+    eval_loss = float('inf')
     curr_loss = float('inf')
 
     pbar = tqdm(range(args['--steps']))
-    
+
     while step <= args['--steps']:
 
         data_iterator = Batch.from_dataset(train_dataset, base_vocab, batch_size=args['--batch_size'], device=device)
@@ -199,9 +191,10 @@ if __name__ == "__main__":
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
                 model.eval()
-                curr_loss = run_epoch(Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
-                                      model,
-                                      CopyGeneratorLossCompute(model.generator, criterion, None), name='Eval')
+                curr_loss = run_epoch(
+                    Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
+                    model,
+                    CopyGeneratorLossCompute(model.generator, criterion, None), name='Eval')
 
                 pbar.set_description('Eval loss: {:.2f}'.format(curr_loss))
 

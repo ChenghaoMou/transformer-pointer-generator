@@ -14,10 +14,12 @@ Options:
   --tgt_vocab=TGT_VOCAB     Target vocab file.
   --save_data=SAVE_DATA     Save data.
 """
+import pickle
+
 from docopt import docopt
 from schema import Schema, Or, Use, SchemaError
+
 from load import Vocab
-import pickle
 
 if __name__ == "__main__":
     args = docopt(__doc__, version='0.1')

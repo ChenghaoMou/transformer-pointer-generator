@@ -11,12 +11,12 @@ Options:
   --model=MODEL             Checkpoint prefix [default: model].
 
 """
-from docopt import docopt
-from schema import Schema, Or, Use, SchemaError
 import copy
 import operator
-import pickle
 from queue import PriorityQueue
+
+from docopt import docopt
+from schema import Schema, Or, Use, SchemaError
 
 from load import *
 from train import make_model
@@ -262,6 +262,7 @@ def beam_decode(model, batch, max_len=30, start_symbol=1, beam=2, topk=1):
 #
 #     return decoded_batch[0]
 #
+
 
 if __name__ == "__main__":
 

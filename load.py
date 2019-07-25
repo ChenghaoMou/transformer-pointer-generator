@@ -1,10 +1,10 @@
 from copy import deepcopy
+from dataclasses import dataclass
 from random import shuffle
 from typing import Union, List, Tuple, Optional
 
 import numpy as np
 import torch
-from dataclasses import dataclass
 from torch.autograd import Variable
 
 from model import subsequent_mask
@@ -29,7 +29,8 @@ class Vocab:
 
     def load_vocab(self, *vocabs) -> None:
         for vocab in vocabs:
-            if vocab is None: continue
+            if vocab is None:
+                continue
             for line in vocab:
                 token = line.strip('\r\n ')
                 if token not in self.token2id:
@@ -92,7 +93,8 @@ class Batch:
     src_full: Union[List[str], np.ndarray, List[List[int]], torch.LongTensor]
     src_mask: Optional[torch.LongTensor] = None
     tgt: Union[List[str], np.ndarray, List[List[int]], torch.LongTensor] = None
-    tgt_full: Union[List[str], np.ndarray, List[List[int]], torch.LongTensor] = None
+    tgt_full: Union[List[str], np.ndarray,
+                    List[List[int]], torch.LongTensor] = None
     tgt_mask: Optional[torch.LongTensor] = None
     vocab: Vocab = None
     ext_vocab: Vocab = None
@@ -118,8 +120,10 @@ class Batch:
         curr_batch = []
         curr_max_len = 0
         while i < len(dataset):
-            curr_batch.append([dataset[i][0][:max_len], dataset[i][1][:max_len]])
-            curr_max_len = min(max(len(curr_batch[-1][0]), curr_max_len), max_len)
+            curr_batch.append(
+                [dataset[i][0][:max_len], dataset[i][1][:max_len]])
+            curr_max_len = min(
+                max(len(curr_batch[-1][0]), curr_max_len), max_len)
             if curr_max_len * len(curr_batch) > batch_size:
                 yield Batch.from_batch_dataset(curr_batch, curr_max_len, base_vocab, shuffled, device)
                 curr_batch = []
@@ -162,7 +166,8 @@ class Batch:
                 tgt_full_ids = [base_vocab['<SOS>']]
                 for token in tgt:
                     tgt_ids.append(base_vocab.get(token, base_vocab['<UNK>']))
-                    tgt_full_ids.append(ext_vocab.get(token, base_vocab['<UNK>']))
+                    tgt_full_ids.append(ext_vocab.get(
+                        token, base_vocab['<UNK>']))
 
                 tgt_ids.append(base_vocab['<EOS>'])
                 tgt_full_ids.append(base_vocab['<EOS>'])
