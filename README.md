@@ -18,21 +18,22 @@ It supports:
 ## Preprocess
 Output *random.data* stores base vocabulary and all corpora.
 
-`
+```bash
 python preprocess.py --train_src random.src --train_tgt random.tgt --valid_src random.src --valid_tgt random.tgt --save_data random.data --src_vocab random.vocab --tgt_vocab random.vocab
-`
+```
 
 ## Train
 
-`
+```bash
 python train.py --data random.data --model tfm --layers 2 --batch_size 500 --steps 300 --valid_steps 100 --save_steps 100 --device cuda
-`
+```
 
 ## Translate
 
-`
+```bash
 python eval.py --test_src random.src --test_tgt random.tgt --model tfm-300.pt
-`
+
+```
 
 # Result
 
@@ -42,8 +43,8 @@ Base vocabulary includes all letters, numbers are added as UNKs.
 - Second line is for used for dynamic vocab during generation;
 - Third line is model's output;
 
-`
-    
+```text
+   
     <UNK> V E <UNK> w W <UNK> C u x n D c A w v <UNK> L A t r L f o g Z k <UNK> l E
     5 V E 1 w W 2 C u x n D c A w v 7 L A t r L f o g Z k 6 l E
     5 V E 1 w W u x x x n D c A w v 7 L 7 f f f f o g g g 6 E
@@ -57,4 +58,5 @@ Base vocabulary includes all letters, numbers are added as UNKs.
     x A a n U I J a J J K h o u m m Y <UNK> B z x S I <UNK> M u <UNK> <UNK> x h
     x A a n U I J a J J K h o u m m Y 6 B z x S I 0 M u 5 8 x h
     x A a n I I J J J J K h o u m m Y 6 z x I I 0 0 M M u 8 h
-`
+
+```
