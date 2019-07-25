@@ -116,10 +116,10 @@ class Batch:
 
         i = 0
         curr_batch = []
-        curr_max_len = max_len
+        curr_max_len = 0
         while i < len(dataset):
             curr_batch.append([dataset[i][0][:max_len], dataset[i][1][:max_len]])
-            curr_max_len = min(len(curr_batch[-1][0]), max_len)
+            curr_max_len = min(max(len(curr_batch[-1][0]), curr_max_len), max_len)
             if curr_max_len * len(curr_batch) > batch_size:
                 yield Batch.from_batch_dataset(curr_batch, curr_max_len, base_vocab, shuffled, device)
                 curr_batch = []
