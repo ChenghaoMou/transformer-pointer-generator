@@ -341,6 +341,7 @@ class CopyGeneratorLossCompute:
         self.generator = generator
         self.criterion = criterion
         self.opt = opt
+        self.nll = nn.NLLLoss()
 
     def __call__(self, dec_output, tgt_full, norm,
                  src_full=None, dec_attns=None, enc_output=None, dec_embeded=None):
@@ -348,10 +349,14 @@ class CopyGeneratorLossCompute:
                            dec_attns=dec_attns, dec_embeded=dec_embeded)
         loss = self.criterion(x.contiguous().view(-1, x.size(-1)),
                               tgt_full.contiguous().view(-1)) / norm
+        with torch.no_grad():
+            perplexity = self.nll(x.contiguous().view(-1, x.size(-1)),
+                                  tgt_full.contiguous().view(-1))
+
         loss.backward()
 
         if self.opt is not None:
             self.opt.step()
             self.opt.optimizer.zero_grad()
 
-        return loss.item() * norm
+        return loss.item() * norm, perplexity
