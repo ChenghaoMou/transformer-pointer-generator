@@ -84,7 +84,13 @@ def run_batch(batch, model, loss_compute, start_symbol=1, name='Train'):
                         enc_output=memory,
                         dec_embeded=model.tgt_embed(ys[:, 1:]))
 
-    return loss, batch.ntokens
+    _, argmax = final_out[:, 1:, :].max(-1)
+    invalid_targets = batch.tgt_full[:, 1:].eq(0)
+    accuracy = argmax.eq(batch.tgt_full[:, 1:]).masked_fill_(
+        invalid_targets, 0).long().sum()
+
+
+    return loss, batch.ntokens, batch.src.size(0), accuracy / batch.ntokens
 
 
 def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
@@ -93,6 +99,8 @@ def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
     start = time.time()
     total_tokens = 0
     total_loss = 0
+    total_lines = 0
+    total_accuracy = 0
 
     for j, batch in enumerate(data_iter):
 
@@ -124,10 +132,18 @@ def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
                             dec_attns=attns,
                             enc_output=memory,
                             dec_embeded=model.tgt_embed(ys[:, 1:]))
+
+        _, argmax = final_out[:, 1:, :].max(-1)
+        invalid_targets = batch.tgt_full[:, 1:].eq(0)
+        accuracy = argmax.eq(batch.tgt_full[:, 1:]).masked_fill_(
+            invalid_targets, 0).long().sum()
+
+        total_accuracy += accuracy
         total_loss += loss
         total_tokens += batch.ntokens
+        total_lines += batch.src.size(0)
 
-    return total_loss / total_tokens
+    return total_loss, total_tokens, total_lines, total_accuracy / total_tokens
 
 
 if __name__ == "__main__":
@@ -184,19 +200,23 @@ if __name__ == "__main__":
 
         for j, batch in enumerate(data_iterator):
 
-            loss, num_tokens = run_batch(batch, model, CopyGeneratorLossCompute(model.generator, criterion, model_opt))
+            loss, num_tokens, lines, accuracy = run_batch(batch, model, CopyGeneratorLossCompute(model.generator, criterion, model_opt))
             step += 1
 
-            pbar.set_postfix_str('Train loss: {:.2f}'.format(loss))
+            pbar.set_postfix_str('Batch Loss: {:.2f}, Batch Perplexity: {:.2f}, Batch Accuracy: {:.2f}'.format(loss/num_tokens,
+                                                                                                               math.exp(loss/lines),
+                                                                                                               accuracy))
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
                 model.eval()
-                curr_loss = run_epoch(
+                curr_loss, num_tokens, lines, accuracy = run_epoch(
                     Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
                     model,
                     CopyGeneratorLossCompute(model.generator, criterion, None), name='Eval')
 
-                pbar.set_description('Eval loss: {:.2f}'.format(curr_loss))
+                pbar.set_description('Eval loss: {:.2f}, Eval Perplexity: {:.2f}, Eval Accuracy: {:.2f}'.format(curr_loss/num_tokens,
+                                                                                                                math.exp(curr_loss/lines),
+                                                                                                                accuracy))
 
             if step % args['--save_steps'] == 0 and float(curr_loss) <= float(eval_loss):
                 eval_loss = curr_loss
