@@ -20,6 +20,7 @@ from schema import Schema, Or, Use, SchemaError
 
 from load import *
 from train import make_model
+import torch.nn as nn
 
 
 class BeamSearchNode(object):
@@ -54,7 +55,7 @@ class BeamSearchNode(object):
         return self.eval() >= other.eval()
 
 
-def greedy_decode(model, batch, max_len=30, start_symbol=1):
+def greedy_decode(model: nn.Module, batch: int, max_len: int = 30, start_symbol: int = 1):
     batch_size = batch.src.size(0)
     memory = model.encode(batch.src, batch.src_mask)
     ys = torch.ones(batch_size, 1).fill_(start_symbol).type_as(batch.src.data)
@@ -79,7 +80,7 @@ def greedy_decode(model, batch, max_len=30, start_symbol=1):
     return pred.cpu().numpy().tolist()[0]
 
 
-def beam_decode(model, batch, max_len=30, start_symbol=1, beam=5, topk=1):
+def beam_decode(model: nn.Module, batch: Batch, max_len: int = 256, start_symbol: int = 1, beam: int = 5, topk: int = 1):
     batch_size = batch.src.size(0)
     memory = model.encode(batch.src, batch.src_mask)
     prediction = []
@@ -102,6 +103,10 @@ def beam_decode(model, batch, max_len=30, start_symbol=1, beam=5, topk=1):
                 break
             score, node = queue.get()
             queue_size -= 1
+
+            if node.length >= max_len:
+                break
+
             if node.curr_word == batch.vocab.token2id['<EOS>'] or node.length == max_len:
                 end_nodes.append((score, node))
                 if len(end_nodes) >= number_required:
@@ -112,8 +117,7 @@ def beam_decode(model, batch, max_len=30, start_symbol=1, beam=5, topk=1):
             ys = Variable(node.curr_input)
             tgt_mask = Variable(subsequent_mask(ys.size(1)).type_as(batch.src.data))
             out, attns = model.decode(memory[idx].unsqueeze(0), None, ys, tgt_mask)
-            # final_out = out if final_out is None else torch.cat(
-            #     [final_out, out[:, -1:, :]], dim=1)
+
             prob = model.generator(dec_output=out, src_full=batch.src_full[idx].unsqueeze(0), dec_attns=attns,
                                    enc_output=memory[idx].unsqueeze(0), dec_embeded=model.tgt_embed(ys))
 
@@ -130,8 +134,6 @@ def beam_decode(model, batch, max_len=30, start_symbol=1, beam=5, topk=1):
                 node = BeamSearchNode(node, next_input, next_word, node.log_prob + log_prob, node.length + 1)
 
                 nextnodes.append((-node.eval(), node))
-
-            # print(nextnodes)
 
             # put them into queue
             for i in range(len(nextnodes)):
@@ -159,115 +161,9 @@ def beam_decode(model, batch, max_len=30, start_symbol=1, beam=5, topk=1):
     return prediction
 
 
-# def beam_decode2(model, batch, start_symbol, max_len=30, beam=5, topk=1, device='cpu'):
-#
-#     decoded_batch = []
-#     batch_size = batch.src.size(0)
-#     encoder_outputs = model.encode(batch.src, batch.src_mask)
-#
-#     # decoding goes sentence by sentence
-#     for idx in tqdm(range(batch_size)):
-#
-#         encoder_output = encoder_outputs[idx].unsqueeze(0) # [1, T, H]
-#         decoder_input = start_symbol
-#
-#         # Number of sentence to generate
-#         endnodes = []
-#         number_required = min((topk + 1), topk - len(endnodes))
-#
-#         # starting node -  decoder_attns, previous node, word id, logp, length
-#         node = BeamSearchNode(None, None, decoder_input, 0, 1)
-#         nodes = PriorityQueue()
-#
-#         # start the queue
-#         nodes.put((-node.eval(), node))
-#         qsize = 1
-#
-#         # start beam search
-#         while True:
-#             # give up when decoding takes too long
-#             if qsize > 2000:
-#                 break
-#
-#             # fetch the best node
-#             score, n = nodes.get()
-#             decoder_input = []
-#             x = n
-#             while x is not None:
-#                 decoder_input.append(x.wordid)
-#                 x = x.prevNode
-#             decoder_input = decoder_input[::-1]  # [B==1, S]
-#             decoder_input = Variable(torch.from_numpy(
-#                 np.array(decoder_input)), requires_grad=False).long().to(device).reshape(1, -1)
-#             decoder_input[decoder_input >= len(batch.vocab.token2id)] = 3
-#
-#             if n.wordid == batch.vocab.token2id['<EOS>'] and n.prevNode is not None:
-#                 endnodes.append((score, n))
-#                 # if we reached maximum # of sentences required
-#                 if len(endnodes) >= number_required:
-#                     break
-#                 else:
-#                     continue
-#
-#             # decode for one step using decoder
-#             # tgt_mask = Variable(subsequent_mask(decoder_input.size(1)).type_as(batch.src.data))
-#             # print(decoder_input.shape, tgt_mask.shape, encoder_output.shape)
-#             # decoder_output, decoder_attns = model.decode(encoder_output, batch.src_mask[idx].unsqueeze(0), decoder_input, tgt_mask)
-#             # print(decoder_input.shape, )
-#
-#             tgt_mask = Variable(subsequent_mask(decoder_input.size(1)).type_as(batch.src.data))
-#             decoder_output, decoder_attns = model.decode(encoder_output, batch.src_mask[idx].unsqueeze(0), decoder_input, tgt_mask)
-#
-#             prob = model.generator(dec_output=decoder_output, src_full=batch.src_full[idx].unsqueeze(0), dec_attns=decoder_attns,
-#                                    enc_output=encoder_output, dec_embeded=model.tgt_embed(decoder_input))
-#
-#             # [B, S, V]
-#             log_prob, indexes = torch.topk(torch.log(prob[:, -1:, :]), beam)
-#             # print(log_prob.shape, indexes.shape)
-#             nextnodes = []
-#
-#             for new_k in range(beam):
-#                 decoded_t = indexes[0, 0, new_k].item()
-#                 log_p = log_prob[0, 0, new_k].item()
-#
-#                 node = BeamSearchNode(
-#                     decoder_attns, n, int(decoded_t), n.logp + log_p, n.leng + 1)
-#                 score = - node.eval()
-#                 nextnodes.append((score, node))
-#
-#             # put them into queue
-#             for i in range(len(nextnodes)):
-#                 score, nn = nextnodes[i]
-#                 nodes.put((score, nn))
-#                 # increase qsize
-#             qsize += len(nextnodes) - 1
-#
-#         # choose nbest paths, back trace them
-#         if len(endnodes) == 0:
-#             endnodes = [nodes.get() for _ in range(topk)]
-#
-#         utterances = []
-#         for score, n in sorted(endnodes, key=operator.itemgetter(0), reverse=True):
-#             utterance = []
-#             utterance.append(n.wordid)
-#             # back trace
-#             while n.prevNode is not None:
-#                 n = n.prevNode
-#                 utterance.append(n.wordid)
-#
-#             utterance = utterance[::-1]
-#             utterances.append(utterance)
-#
-#         decoded_batch.append(utterances)
-#
-#     return decoded_batch[0]
-#
-
-
 if __name__ == "__main__":
 
     args = docopt(__doc__, version='0.1')
-    # print(args)
 
     schema = Schema({
         '--help': Or(None, Use(bool)),
@@ -281,15 +177,13 @@ if __name__ == "__main__":
     except SchemaError as e:
         exit(e)
 
-    # print(args)
-
     pickled_data = torch.load(args['--model'])
     model_state, resources, parameters = pickled_data['model'], pickled_data['resources'], pickled_data['parameters']
     device = parameters['--device']
 
     base_vocab = resources['base_vocab']
     V = len(base_vocab)
-    model = make_model(V, V, N=parameters['--layers'],
+    model = make_model(V, V, layers=parameters['--layers'],
                        d_model=parameters['--d_model'],
                        d_ff=parameters['--d_ff'],
                        h=parameters['--heads'],
@@ -305,8 +199,8 @@ if __name__ == "__main__":
     with torch.no_grad():
 
         for batch in Batch.from_dataset(test_dataset, base_vocab, batch_size=parameters['--batch_size'], device=device):
-            pred = beam_decode(model, batch, start_symbol=1, max_len=30)
-            # print(pred)
+            pred = beam_decode(model, batch, start_symbol=1, max_len=256)
+
             print('*' * 20)
             print(' '.join(batch.vocab.id2token[i] for i in batch.src[0].cpu(
             ).data.numpy() if i not in [0, 1, 2]))

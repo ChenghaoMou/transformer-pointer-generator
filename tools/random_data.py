@@ -3,7 +3,7 @@ import string
 import torch
 
 
-def random_dataset(max_len=20, num=2000, name='random', seed=0) -> None:
+def random_dataset(max_len: int = 20, num: int = 2000, name: str = 'random', seed: int = 0) -> None:
     """
     Generate random dataset for copy task.
 

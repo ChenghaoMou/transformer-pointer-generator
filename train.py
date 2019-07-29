@@ -32,18 +32,19 @@ from tqdm import tqdm as tqdm
 
 from load import Batch
 from model import *
+from typing import Callable, Iterator
 
 
-def make_model(src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1, device='cpu'):
-    "Helper: Construct a model from hyperparameters."
+def make_model(src_vocab: int, tgt_vocab: int, layers: int = 6,
+               d_model: int = 512, d_ff: int = 2048, h: int = 8, dropout: int = 0.1, device: str = 'cpu'):
     c = copy.deepcopy
     attn = MultiHeadedAttention(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
-        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
+        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), layers),
         Decoder(DecoderLayer(d_model, c(attn), c(attn),
-                             c(ff), dropout), N),
+                             c(ff), dropout), layers),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
         CopyGenerator(d_model, tgt_vocab))
@@ -54,7 +55,7 @@ def make_model(src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0
     return model.to(device)
 
 
-def run_batch(batch, model, loss_compute, start_symbol=1, name='Train'):
+def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, start_symbol: int = 1, name: str = 'Train'):
     max_len = batch.tgt_full.size(1)
     memory = model.encode(batch.src, batch.src_mask)
     batch_size, seq_len = batch.src.size()
@@ -65,8 +66,7 @@ def run_batch(batch, model, loss_compute, start_symbol=1, name='Train'):
 
     for i in range(max_len - 1):
         ys = Variable(ys)
-        tgt_mask = Variable(subsequent_mask(
-            ys.size(1)).type_as(batch.src.data))
+        tgt_mask = Variable(subsequent_mask(ys.size(1)).type_as(batch.src.data))
         out, attns = model.decode(memory, None,
                                   ys,
                                   tgt_mask)
@@ -95,7 +95,7 @@ def run_batch(batch, model, loss_compute, start_symbol=1, name='Train'):
     return loss, batch.ntokens, 100 * accuracy / batch.ntokens, perplexity /batch.src.size(0)
 
 
-def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
+def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, start_symbol: int = 1, name: str = 'Train'):
     "Standard Training and Logging Function"
 
     start = time.time()
@@ -155,7 +155,6 @@ def run_epoch(data_iter, model, loss_compute, start_symbol=1, name='Train'):
 if __name__ == "__main__":
 
     args = docopt(__doc__, version='0.1')
-    # print(args)
 
     schema = Schema({
         '--help': Or(None, Use(bool)),
@@ -189,7 +188,7 @@ if __name__ == "__main__":
 
     V = len(base_vocab)
     criterion = LabelSmoothing(size=V, padding_idx=0, smoothing=args['--smooth'])
-    model = make_model(V, V, N=args['--layers']).to(args['--device'])
+    model = make_model(V, V, layers=args['--layers']).to(args['--device'])
     model_opt = get_std_opt(model)
     train_loss_compute = CopyGeneratorLossCompute(model.generator, criterion, model_opt)
     valid_loss_compute = CopyGeneratorLossCompute(model.generator, criterion, None)

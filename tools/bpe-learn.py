@@ -8,6 +8,6 @@ if __name__ == "__main__":
 	parser.add_argument('--model', '-m', type=str, help='Model prefix')
 	parser.add_argument('--vocab_size', '-v', type=int, help='vocab size')
 	args = parser.parse_args()
-	print(args)
+
 	spm.SentencePieceTrainer.Train(f"--input={args.input} --model_prefix={args.model} --vocab_size={args.vocab_size}")
 	
