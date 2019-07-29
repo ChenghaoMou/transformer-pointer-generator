@@ -218,6 +218,7 @@ if __name__ == "__main__":
             loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute, step=step)
             step += 1
             mem_size = (torch.cuda.memory_allocated() + torch.cuda.memory_cached()) / 1024 / 1024
+            pbar.set_description_str('')
             pbar.set_postfix_str(
                 'Mem size: {:.2f}MB Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
                                                                                                 loss,
