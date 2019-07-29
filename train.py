@@ -55,14 +55,15 @@ def make_model(src_vocab: int, tgt_vocab: int, layers: int = 6,
     return model.to(device)
 
 
-def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, start_symbol: int = 1, name: str = 'Train'):
+def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, step: int, start_symbol: int = 1,
+              name: str = 'Train'):
     max_len = batch.tgt_full.size(1)
     memory = model.encode(batch.src, batch.src_mask)
     batch_size, seq_len = batch.src.size()
     ys = torch.ones(batch_size, 1).fill_(
         start_symbol).type_as(batch.src.data)
     final_out = torch.zeros((batch_size, 1, 512)).to(device)
-    final_pred = torch.zeros((batch_size, max_len-1)).to(device)
+    final_pred = torch.zeros((batch_size, max_len - 1)).to(device)
 
     for i in range(max_len - 1):
         ys = Variable(ys)
@@ -79,14 +80,13 @@ def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, start_symb
         ys = torch.cat([ys, copy.deepcopy(next_word)], dim=1)
 
     loss, perplexity = loss_compute(final_out[:, 1:, :],
-                        batch.tgt_full[:, 1:],
-                        batch.ntokens,
-                        src_full=batch.src_full,
-                        dec_attns=attns,
-                        enc_output=memory,
-                        dec_embeded=model.tgt_embed(ys[:, 1:]))
-
-
+                                    batch.tgt_full[:, 1:],
+                                    batch.ntokens,
+                                    step=step,
+                                    src_full=batch.src_full,
+                                    dec_attns=attns,
+                                    enc_output=memory,
+                                    dec_embeded=model.tgt_embed(ys[:, 1:]))
 
     invalid_targets = batch.tgt_full[:, 1:].eq(0)
     accuracy = final_pred.long().eq(batch.tgt_full[:, 1:]).masked_fill_(
@@ -95,7 +95,8 @@ def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, start_symb
     return loss, perplexity, 100 * accuracy / batch.ntokens, batch_size
 
 
-def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, start_symbol: int = 1, name: str = 'Train'):
+def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, start_symbol: int = 1,
+              name: str = 'Train'):
     "Standard Training and Logging Function"
 
     start = time.time()
@@ -115,7 +116,7 @@ def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, sta
         ys = torch.ones(batch_size, 1).fill_(
             start_symbol).type_as(batch.src.data)
         final_out = torch.zeros((batch_size, 1, 512)).to(device)
-        final_pred = torch.zeros((batch_size, max_len-1)).to(device)
+        final_pred = torch.zeros((batch_size, max_len - 1)).to(device)
 
         for i in range(max_len - 1):
             ys = Variable(ys)
@@ -133,13 +134,13 @@ def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, sta
             ys = torch.cat([ys, copy.deepcopy(next_word)], dim=1)
 
         loss, perplexity = loss_compute(final_out[:, 1:, :],
-                            batch.tgt_full[:, 1:],
-                            batch.ntokens,
-                            src_full=batch.src_full,
-                            dec_attns=attns,
-                            enc_output=memory,
-                            dec_embeded=model.tgt_embed(ys[:, 1:]))
-
+                                        batch.tgt_full[:, 1:],
+                                        batch.ntokens,
+                                        step=1,
+                                        src_full=batch.src_full,
+                                        dec_attns=attns,
+                                        enc_output=memory,
+                                        dec_embeded=model.tgt_embed(ys[:, 1:]))
 
         invalid_targets = batch.tgt_full[:, 1:].eq(0)
         accuracy = final_pred.long().eq(batch.tgt_full[:, 1:]).masked_fill_(
@@ -214,16 +215,16 @@ if __name__ == "__main__":
 
             model.train()
 
-            loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute)
+            loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute, step=step)
             step += 1
             mem_size = (torch.cuda.memory_allocated() + torch.cuda.memory_cached()) / 1024 / 1024
-            pbar.set_postfix_str('Mem size: {:.2f}MB Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
-                                                                                                                 loss,
-                                                                                                                 perplexity,
-                                                                                                                 accuracy))
+            pbar.set_postfix_str(
+                'Mem size: {:.2f}MB Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
+                                                                                                loss,
+                                                                                                perplexity,
+                                                                                                accuracy))
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
-
                 with torch.no_grad():
                     torch.cuda.empty_cache()
                     model.eval()
@@ -232,10 +233,11 @@ if __name__ == "__main__":
                         model,
                         valid_loss_compute, name='Eval')
 
-                    pbar.set_description('Eval samples: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
-                                                                                                                    curr_loss,
-                                                                                                                    perplexity,
-                                                                                                                    accuracy))
+                    pbar.set_description(
+                        'Eval samples: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
+                                                                                                      curr_loss,
+                                                                                                      perplexity,
+                                                                                                      accuracy))
 
             if step % args['--save_steps'] == 0 and float(curr_loss) <= float(eval_loss):
                 eval_loss = curr_loss
@@ -259,5 +261,5 @@ if __name__ == "__main__":
                     }
                 }, f"{args['--model']}-{step}.pt")
 
-            if step % 5 == 0:
-                pbar.update(5)
+            if step % 50 == 0:
+                pbar.update(50)

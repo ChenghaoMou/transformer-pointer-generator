@@ -329,21 +329,22 @@ class CopyGenerator(nn.Module):
             final_logits[:, :, :logits.size(-1)] += logits
         else:
             final_logits = logits
-        final_logits.clamp(1e-8, out=final_logits)
-        torch.log(final_logits, out=final_logits)
+        final_logits = final_logits.clamp(1e-8)
+        final_logits = torch.log(final_logits)
         return final_logits
 
 
 class CopyGeneratorLossCompute:
     "A simple loss compute and train function."
 
-    def __init__(self, generator, criterion, opt=None):
+    def __init__(self, generator, criterion, opt=None, accumulate_step=16):
         self.generator = generator
         self.criterion = criterion
         self.opt = opt
         self.nll = nn.NLLLoss(reduction='sum')
+        self.accumulate_step = accumulate_step
 
-    def __call__(self, dec_output, tgt_full, norm,
+    def __call__(self, dec_output, tgt_full, norm, step,
                  src_full=None, dec_attns=None, enc_output=None, dec_embeded=None):
         x = self.generator(dec_output=dec_output, src_full=src_full, enc_output=enc_output,
                            dec_attns=dec_attns, dec_embeded=dec_embeded)
@@ -353,8 +354,9 @@ class CopyGeneratorLossCompute:
         perplexity = self.nll(x.contiguous().view(-1, x.size(-1)),
                               tgt_full.contiguous().view(-1)) / tgt_full.size(0)
 
-        if self.opt is not None:
-            loss.backward()
+        loss.backward()
+
+        if self.opt is not None and step % self.accumulate_step == 0:
             self.opt.step()
             self.opt.optimizer.zero_grad()
 
