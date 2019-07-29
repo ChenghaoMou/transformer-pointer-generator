@@ -191,6 +191,8 @@ if __name__ == "__main__":
     criterion = LabelSmoothing(size=V, padding_idx=0, smoothing=args['--smooth'])
     model = make_model(V, V, N=args['--layers']).to(args['--device'])
     model_opt = get_std_opt(model)
+    train_loss_compute = CopyGeneratorLossCompute(model.generator, criterion, model_opt)
+    valid_loss_compute = CopyGeneratorLossCompute(model.generator, criterion, None)
 
     step = 0
 
@@ -202,25 +204,32 @@ if __name__ == "__main__":
 
     while step <= args['--steps']:
 
+        torch.cuda.empty_cache()
+
         data_iterator = Batch.from_dataset(train_dataset, base_vocab, batch_size=args['--batch_size'], device=device)
 
         for j, batch in enumerate(data_iterator):
 
-            loss, num_tokens, accuracy, perplexity = run_batch(batch, model, CopyGeneratorLossCompute(model.generator, criterion, model_opt))
+            model.train()
+
+            loss, num_tokens, accuracy, perplexity = run_batch(batch, model, train_loss_compute)
             step += 1
 
-            pbar.set_postfix_str('Batch Loss: {:.2f}, Batch Perplexity: {:.2f}, Batch Accuracy: {:.2f}%'.format(loss/num_tokens,
+            pbar.set_postfix_str('Batch Loss: {:.2f}, Batch Perplexity: {:.2f}, Batch Accuracy: {:.2f}%'.format(loss,
                                                                                                                perplexity,
                                                                                                                accuracy))
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
-                model.eval()
-                curr_loss, num_tokens, accuracy, perplexity = run_epoch(
-                    Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
-                    model,
-                    CopyGeneratorLossCompute(model.generator, criterion, None), name='Eval')
 
-                pbar.set_description('Eval loss: {:.2f}, Eval Perplexity: {:.2f}, Eval Accuracy: {:.2f}%'.format(curr_loss/num_tokens,
+                with torch.no_grad():
+                    torch.cuda.empty_cache()
+                    model.eval()
+                    curr_loss, num_tokens, accuracy, perplexity = run_epoch(
+                        Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
+                        model,
+                        valid_loss_compute, name='Eval')
+
+                    pbar.set_description('Eval loss: {:.2f}, Eval Perplexity: {:.2f}, Eval Accuracy: {:.2f}%'.format(curr_loss,
                                                                                                                 perplexity,
                                                                                                                 accuracy))
 

@@ -1,3 +1,4 @@
+import random
 from copy import deepcopy
 from dataclasses import dataclass
 from random import shuffle
@@ -115,6 +116,8 @@ class Batch:
 
         # sort by src length
         dataset = sorted(dataset, key=lambda x: len(x[0]))
+
+        # random.shuffle(dataset)
 
         i = 0
         curr_batch = []

@@ -79,7 +79,7 @@ def greedy_decode(model, batch, max_len=30, start_symbol=1):
     return pred.cpu().numpy().tolist()[0]
 
 
-def beam_decode(model, batch, max_len=30, start_symbol=1, beam=2, topk=1):
+def beam_decode(model, batch, max_len=30, start_symbol=1, beam=5, topk=1):
     batch_size = batch.src.size(0)
     memory = model.encode(batch.src, batch.src_mask)
     prediction = []
@@ -302,12 +302,14 @@ if __name__ == "__main__":
         args['--test_src'], args['--test_tgt']
     )
 
-    for batch in Batch.from_dataset(test_dataset, base_vocab, batch_size=parameters['--batch_size'], device=device):
-        pred = beam_decode(model, batch, start_symbol=1, max_len=30)
-        # print(pred)
-        print('*' * 20)
-        print(' '.join(batch.vocab.id2token[i] for i in batch.src[0].cpu(
-        ).data.numpy() if i not in [0, 1, 2]))
-        print(' '.join(batch.ext_vocab.id2token[i] for i in batch.src_full[0].cpu(
-        ).data.numpy() if i not in [0, 1, 2]))
-        print(' '.join(batch.ext_vocab.id2token[i] for i in pred[0] if i not in [0, 1, 2]))
+    with torch.no_grad():
+
+        for batch in Batch.from_dataset(test_dataset, base_vocab, batch_size=parameters['--batch_size'], device=device):
+            pred = beam_decode(model, batch, start_symbol=1, max_len=30)
+            # print(pred)
+            print('*' * 20)
+            print(' '.join(batch.vocab.id2token[i] for i in batch.src[0].cpu(
+            ).data.numpy() if i not in [0, 1, 2]))
+            print(' '.join(batch.ext_vocab.id2token[i] for i in batch.src_full[0].cpu(
+            ).data.numpy() if i not in [0, 1, 2]))
+            print(' '.join(batch.ext_vocab.id2token[i] for i in pred[0] if i not in [0, 1, 2]))
