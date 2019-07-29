@@ -216,11 +216,11 @@ if __name__ == "__main__":
 
             loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute)
             step += 1
-
-            pbar.set_postfix_str('Batch size: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
-                                                                                                             loss,
-                                                                                                             perplexity,
-                                                                                                             accuracy))
+            batch_mem_size = batch.src.shape[0] * batch.src.shape[1] * 4 / 1024
+            pbar.set_postfix_str('Batch size: {:.2f}MB Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(batch_mem_size,
+                                                                                                                   loss,
+                                                                                                                   perplexity,
+                                                                                                                   accuracy))
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
 
@@ -232,7 +232,7 @@ if __name__ == "__main__":
                         model,
                         valid_loss_compute, name='Eval')
 
-                    pbar.set_description('Eval size: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
+                    pbar.set_description('Eval samples: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
                                                                                                                     curr_loss,
                                                                                                                     perplexity,
                                                                                                                     accuracy))
