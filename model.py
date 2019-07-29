@@ -324,18 +324,12 @@ class CopyGenerator(nn.Module):
             final_logits = torch.zeros((batch, steps, vocab_size)).type_as(logits)
             final_logits = final_logits.scatter_add(
                 2, src_full.unsqueeze(1).repeat([1, steps, 1]), dec_attn)
-
-            # Inplace softmax
-            torch.exp(final_logits, out=final_logits)
-            summed = torch.sum(final_logits, dim=-1, keepdim=True)
-            final_logits /= summed
-
             final_logits = torch.mul(
-                1 - p_gen, final_logits)
+                1 - p_gen, torch.softmax(final_logits, dim=-1))
             final_logits[:, :, :logits.size(-1)] += logits
         else:
             final_logits = logits
-        final_logits.clamp(1e-8, out=final_logits)
+        final_logits = final_logits.clamp(1e-8)
         return torch.log(final_logits)
 
 
