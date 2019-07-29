@@ -92,7 +92,7 @@ def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, start_symb
     accuracy = final_pred.long().eq(batch.tgt_full[:, 1:]).masked_fill_(
         invalid_targets, 0).long().sum()
 
-    return loss, batch.ntokens, 100 * accuracy / batch.ntokens, perplexity /batch.src.size(0)
+    return loss, perplexity, 100 * accuracy / batch.ntokens, batch_size
 
 
 def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, start_symbol: int = 1, name: str = 'Train'):
@@ -104,12 +104,14 @@ def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, sta
     total_lines = 0
     total_accuracy = 0
     total_pp = 0
+    total_size = 0
 
     for j, batch in enumerate(data_iter):
 
         max_len = batch.tgt_full.size(1)
         memory = model.encode(batch.src, batch.src_mask)
         batch_size, seq_len = batch.src.size()
+
         ys = torch.ones(batch_size, 1).fill_(
             start_symbol).type_as(batch.src.data)
         final_out = torch.zeros((batch_size, 1, 512)).to(device)
@@ -143,13 +145,14 @@ def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, sta
         accuracy = final_pred.long().eq(batch.tgt_full[:, 1:]).masked_fill_(
             invalid_targets, 0).long().sum()
 
+        total_size += batch_size
         total_pp += perplexity
         total_accuracy += accuracy
         total_loss += loss
         total_tokens += batch.ntokens
         total_lines += batch.src.size(0)
 
-    return total_loss, total_tokens, 100 * total_accuracy / total_tokens, total_pp / total_lines
+    return total_loss, total_pp, 100 * total_accuracy / total_tokens, total_size
 
 
 if __name__ == "__main__":
@@ -211,26 +214,28 @@ if __name__ == "__main__":
 
             model.train()
 
-            loss, num_tokens, accuracy, perplexity = run_batch(batch, model, train_loss_compute)
+            loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute)
             step += 1
 
-            pbar.set_postfix_str('Batch Loss: {:.2f}, Batch Perplexity: {:.2f}, Batch Accuracy: {:.2f}%'.format(loss,
-                                                                                                               perplexity,
-                                                                                                               accuracy))
+            pbar.set_postfix_str('Batch size: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
+                                                                                                             loss,
+                                                                                                             perplexity,
+                                                                                                             accuracy))
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
 
                 with torch.no_grad():
                     torch.cuda.empty_cache()
                     model.eval()
-                    curr_loss, num_tokens, accuracy, perplexity = run_epoch(
+                    curr_loss, perplexity, accuracy, num_sents = run_epoch(
                         Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
                         model,
                         valid_loss_compute, name='Eval')
 
-                    pbar.set_description('Eval loss: {:.2f}, Eval Perplexity: {:.2f}, Eval Accuracy: {:.2f}%'.format(curr_loss,
-                                                                                                                perplexity,
-                                                                                                                accuracy))
+                    pbar.set_description('Eval size: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
+                                                                                                                    curr_loss,
+                                                                                                                    perplexity,
+                                                                                                                    accuracy))
 
             if step % args['--save_steps'] == 0 and float(curr_loss) <= float(eval_loss):
                 eval_loss = curr_loss
