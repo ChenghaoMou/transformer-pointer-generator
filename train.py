@@ -206,21 +206,21 @@ if __name__ == "__main__":
 
     while step <= args['--steps']:
 
-        torch.cuda.empty_cache()
-
         data_iterator = Batch.from_dataset(train_dataset, base_vocab, batch_size=args['--batch_size'], device=device)
 
         for j, batch in enumerate(data_iterator):
+
+            torch.cuda.empty_cache()
 
             model.train()
 
             loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute)
             step += 1
-            batch_mem_size = batch.src.shape[0] * batch.src.shape[1] * 4 / 1024
-            pbar.set_postfix_str('Batch size: {:.2f}MB Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(batch_mem_size,
-                                                                                                                   loss,
-                                                                                                                   perplexity,
-                                                                                                                   accuracy))
+            mem_size = (torch.cuda.memory_allocated() + torch.cuda.memory_cached()) / 1024 / 1024
+            pbar.set_postfix_str('Mem size: {:.2f}MB Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
+                                                                                                                 loss,
+                                                                                                                 perplexity,
+                                                                                                                 accuracy))
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
 
@@ -259,4 +259,5 @@ if __name__ == "__main__":
                     }
                 }, f"{args['--model']}-{step}.pt")
 
-            pbar.update(1)
+            if step % 5 == 0:
+                pbar.update(5)
