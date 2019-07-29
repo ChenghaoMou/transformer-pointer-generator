@@ -312,11 +312,10 @@ class CopyGenerator(nn.Module):
         dec_attn = dec_attns[-1]  # [batch, head, steps, seq]
         dec_attn = dec_attn.sum(dim=1)  # [batch, steps, seq]
         context = torch.bmm(dec_attn, enc_output)  # [batch, steps, hidden]
-        hidden_state = dec_output  # [batch, steps, hidden]
+        # hidden_state = dec_output  # [batch, steps, hidden]
 
         # [batch, steps, 1]
-        p_gen = torch.sigmoid(
-            self.prob(torch.cat([context, hidden_state, dec_embeded], dim=-1)))
+        p_gen = torch.sigmoid(self.prob(torch.cat([context, dec_output, dec_embeded], dim=-1)))
         logits = torch.softmax(self.proj(dec_output), dim=-1)
 
         if src_full is not None:
@@ -325,12 +324,18 @@ class CopyGenerator(nn.Module):
             final_logits = torch.zeros((batch, steps, vocab_size)).type_as(logits)
             final_logits = final_logits.scatter_add(
                 2, src_full.unsqueeze(1).repeat([1, steps, 1]), dec_attn)
+
+            # Inplace softmax
+            torch.exp(final_logits, out=final_logits)
+            summed = torch.sum(final_logits, dim=-1, keepdim=True)
+            final_logits /= summed
+
             final_logits = torch.mul(
-                1 - p_gen, torch.softmax(final_logits, dim=-1))
+                1 - p_gen, final_logits)
             final_logits[:, :, :logits.size(-1)] += logits
         else:
             final_logits = logits
-        final_logits = final_logits.clamp(1e-8)
+        final_logits.clamp(1e-8, out=final_logits)
         return torch.log(final_logits)
 
 
