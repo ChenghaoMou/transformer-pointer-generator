@@ -329,8 +329,9 @@ class CopyGenerator(nn.Module):
             final_logits[:, :, :logits.size(-1)] += logits
         else:
             final_logits = logits
-        final_logits = final_logits.clamp(1e-8)
-        return torch.log(final_logits)
+        final_logits.clamp(1e-8, out=final_logits)
+        torch.log(final_logits, out=final_logits)
+        return final_logits
 
 
 class CopyGeneratorLossCompute:
