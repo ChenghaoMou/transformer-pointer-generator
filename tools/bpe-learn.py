@@ -9,5 +9,5 @@ if __name__ == "__main__":
 	parser.add_argument('--vocab_size', '-v', type=int, help='vocab size')
 	args = parser.parse_args()
 
-	spm.SentencePieceTrainer.Train(f"--input={args.input} --model_prefix={args.model} --vocab_size={args.vocab_size}")
+	spm.SentencePieceTrainer.Train(f"--model_type=bpe --input={args.input} --model_prefix={args.model} --vocab_size={args.vocab_size}")
 	
