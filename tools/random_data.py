@@ -21,9 +21,9 @@ def random_dataset(max_len: int = 20, num: int = 2000, name: str = 'random', see
     random.seed(seed)
 
     # Only letters are in the base vocabulary
-    open(f'data/{name}.vocab', 'w').write('\n'.join(list(string.ascii_letters)))
+    open(f'../data/{name}.vocab', 'w').write('\n'.join(list(string.ascii_letters)))
 
-    with open(f'data/{name}.src', 'w') as src, open(f'data/{name}.tgt', 'w') as tgt:
+    with open(f'../data/{name}.src', 'w') as src, open(f'../data/{name}.tgt', 'w') as tgt:
 
         for x in range(num):
             # Random sequence length

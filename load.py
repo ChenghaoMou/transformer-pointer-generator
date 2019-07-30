@@ -28,12 +28,12 @@ class Vocab:
         if self.id2token is None:
             self.id2token = {i: k for k, i in self.token2id.items()}
 
-    def load_vocab(self, *vocabs) -> None:
+    def load_vocab(self, *vocabs, take=lambda l: l.strip('\r\n ').split('\t')[0]) -> None:
         for vocab in vocabs:
             if vocab is None:
                 continue
             for line in vocab:
-                token = line.strip('\r\n ')
+                token = take(line)
                 if token not in self.token2id:
                     self.token2id[token] = len(self.token2id)
                     self.id2token[self.token2id[token]] = token

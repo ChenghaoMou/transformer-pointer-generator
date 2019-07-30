@@ -23,6 +23,7 @@ Options:
 """
 import os
 import pickle
+import sys
 import time
 from collections import deque
 
@@ -217,13 +218,10 @@ if __name__ == "__main__":
 
             loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute, step=step)
             step += 1
-            mem_size = (torch.cuda.memory_allocated() + torch.cuda.memory_cached()) / 1024 / 1024
-            pbar.set_description_str('')
-            pbar.set_postfix_str(
-                'Mem size: {:.2f}MB Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
-                                                                                                loss,
-                                                                                                perplexity,
-                                                                                                accuracy))
+            if device == 'cuda':
+                mem_size = (torch.cuda.memory_allocated() + torch.cuda.memory_cached()) / 1024 / 1024
+            else:
+                mem_size = 0
 
             if step % args['--valid_steps'] == 0 and valid_dataset is not None:
                 with torch.no_grad():
@@ -234,11 +232,13 @@ if __name__ == "__main__":
                         model,
                         valid_loss_compute, name='Eval')
 
-                    pbar.set_description(
+                    pbar.write(
                         'Eval samples: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
                                                                                                       curr_loss,
                                                                                                       perplexity,
-                                                                                                      accuracy))
+                                                                                                      accuracy),
+                        file=sys.stdout
+                    )
 
             if step % args['--save_steps'] == 0 and float(curr_loss) <= float(eval_loss):
                 eval_loss = curr_loss
@@ -263,4 +263,10 @@ if __name__ == "__main__":
                 }, f"{args['--model']}-{step}.pt")
 
             if step % 50 == 0:
+                pbar.set_postfix_str(
+                    'Mem size: {:.2f} MB|{} Samples Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
+                                                                                                                batch.src.size(0),
+                                                                                                                loss,
+                                                                                                                perplexity,
+                                                                                                                accuracy))
                 pbar.update(50)

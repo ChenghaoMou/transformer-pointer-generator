@@ -337,7 +337,7 @@ class CopyGenerator(nn.Module):
 class CopyGeneratorLossCompute:
     "A simple loss compute and train function."
 
-    def __init__(self, generator, criterion, opt=None, accumulate_step=16):
+    def __init__(self, generator, criterion, opt=None, accumulate_step=2):
         self.generator = generator
         self.criterion = criterion
         self.opt = opt
@@ -349,12 +349,13 @@ class CopyGeneratorLossCompute:
         x = self.generator(dec_output=dec_output, src_full=src_full, enc_output=enc_output,
                            dec_attns=dec_attns, dec_embeded=dec_embeded)
         loss = self.criterion(x.contiguous().view(-1, x.size(-1)),
-                              tgt_full.contiguous().view(-1)) / norm
+                              tgt_full.contiguous().view(-1)) / norm / self.accumulate_step
 
         perplexity = self.nll(x.contiguous().view(-1, x.size(-1)),
                               tgt_full.contiguous().view(-1)) / tgt_full.size(0)
 
-        loss.backward()
+        if self.opt is not None:
+            loss.backward()
 
         if self.opt is not None and step % self.accumulate_step == 0:
             self.opt.step()
