@@ -233,10 +233,10 @@ if __name__ == "__main__":
                         valid_loss_compute, name='Eval')
 
                     pbar.write(
-                        'Eval samples: {} Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
-                                                                                                      curr_loss,
-                                                                                                      perplexity,
-                                                                                                      accuracy),
+                        'Eval : {}, Loss: {:.2f}, Ppl: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
+                                                                                         curr_loss/num_sents,
+                                                                                         perplexity/num_sents,
+                                                                                         accuracy),
                         file=sys.stdout
                     )
 
@@ -264,9 +264,9 @@ if __name__ == "__main__":
 
             if step % 50 == 0:
                 pbar.set_postfix_str(
-                    'Mem size: {:.2f} MB|{} Samples Loss: {:.2f}, Perplexity: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
-                                                                                                                batch.src.size(0),
-                                                                                                                loss,
-                                                                                                                perplexity,
-                                                                                                                accuracy))
+                    'Memory: {:.2f}MB|{}, Loss: {:.2f}, Ppl: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
+                                                                                               batch.src.size(0),
+                                                                                               loss/batch.src.size(0),
+                                                                                               perplexity/batch.src.size(0),
+                                                                                               accuracy))
                 pbar.update(50)
