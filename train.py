@@ -90,8 +90,7 @@ def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, step: int,
                                     dec_embeded=model.tgt_embed(ys[:, 1:]))
 
     invalid_targets = batch.tgt_full[:, 1:].eq(0)
-    accuracy = final_pred.long().eq(batch.tgt_full[:, 1:]).masked_fill_(
-        invalid_targets, 0).long().sum()
+    accuracy = final_pred.long().eq(batch.tgt_full[:, 1:]).masked_fill_(invalid_targets, 0).long().sum()
 
     return loss, perplexity, accuracy, batch_size, batch.ntokens
 
@@ -134,7 +133,7 @@ def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, sta
             next_word[next_word >= len(batch.vocab.token2id)] = 3
             ys = torch.cat([ys, copy.deepcopy(next_word)], dim=1)
 
-        loss, perplexity = loss_compute(final_out[:, 1:, :],
+        loss, ppl_loss = loss_compute(final_out[:, 1:, :],
                                         batch.tgt_full[:, 1:],
                                         batch.ntokens,
                                         step=1,
@@ -148,13 +147,13 @@ def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, sta
             invalid_targets, 0).long().sum()
 
         total_size += batch_size
-        total_pp += perplexity
+        total_pp += ppl_loss
         total_accuracy += accuracy
         total_loss += loss
         total_tokens += batch.ntokens
         total_lines += batch.src.size(0)
 
-    return total_loss, total_pp, 100 * total_accuracy / total_tokens, total_size
+    return total_loss, total_pp, accuracy, total_size, total_tokens
 
 
 if __name__ == "__main__":
@@ -208,7 +207,8 @@ if __name__ == "__main__":
 
     while step <= args['--steps']:
 
-        curr_loss = 0. 
+        curr_loss = 0.
+        curr_ppl_loss = 0.
         curr_tokens = 0 
         curr_correct = 0
 
@@ -220,11 +220,12 @@ if __name__ == "__main__":
 
             model.train()
 
-            loss, perplexity, correct, num_sents, num_tokens = run_batch(batch, model, train_loss_compute, step=step)
+            loss, ppl_loss, correct, num_sents, num_tokens = run_batch(batch, model, train_loss_compute, step=step)
             
             curr_correct += correct
             curr_tokens += num_tokens
-            curr_loss += loss 
+            curr_loss += loss
+            curr_ppl_loss += ppl_loss
 
             step += 1
             if device == 'cuda':
@@ -236,7 +237,7 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     torch.cuda.empty_cache()
                     model.eval()
-                    curr_loss, perplexity, accuracy, num_sents = run_epoch(
+                    curr_loss, ppl_loss, accuracy, num_sents, num_tokens = run_epoch(
                         Batch.from_dataset(valid_dataset, base_vocab, batch_size=args['--batch_size'], device=device),
                         model,
                         valid_loss_compute, name='Eval')
@@ -244,8 +245,8 @@ if __name__ == "__main__":
                     pbar.write(
                         'Eval : {}, Loss: {:.2f}, Ppl: {:.2f}, Accuracy: {:.2f}%'.format(num_sents,
                                                                                          curr_loss/num_sents,
-                                                                                         perplexity/num_sents,
-                                                                                         accuracy),
+                                                                                         math.exp(ppl_loss/num_tokens),
+                                                                                         100 * accuracy / num_tokens),
                         file=sys.stdout
                     )
 
@@ -275,9 +276,10 @@ if __name__ == "__main__":
                 pbar.set_postfix_str(
                     'Memory: {:.2f}MB, Loss: {:.2f}, Ppl: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
                                                                                             curr_loss,
-                                                                                            math.exp(perplexity/curr_tokens),
+                                                                                            math.exp(curr_ppl_loss/curr_tokens),
                                                                                             100 * curr_correct/curr_tokens))
                 curr_loss = 0.  
                 curr_tokens = 0 
                 curr_correct = 0
+                curr_ppl_loss = 0.
                 pbar.update(50)

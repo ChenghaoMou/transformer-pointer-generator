@@ -348,11 +348,12 @@ class CopyGeneratorLossCompute:
                  src_full=None, dec_attns=None, enc_output=None, dec_embeded=None):
         x = self.generator(dec_output=dec_output, src_full=src_full, enc_output=enc_output,
                            dec_attns=dec_attns, dec_embeded=dec_embeded)
+
         loss = self.criterion(x.contiguous().view(-1, x.size(-1)),
                               tgt_full.contiguous().view(-1)) / norm / self.accumulate_step
 
-        perplexity = self.nll(x.contiguous().view(-1, x.size(-1)),
-                              tgt_full.contiguous().view(-1)) / tgt_full.size(0)
+        ppl_loss = self.nll(x.contiguous().view(-1, x.size(-1)),
+                              tgt_full.contiguous().view(-1))
 
         if self.opt is not None:
             loss.backward()
@@ -361,4 +362,4 @@ class CopyGeneratorLossCompute:
             self.opt.step()
             self.opt.optimizer.zero_grad()
 
-        return loss.item() * norm, perplexity
+        return loss.item() * norm, ppl_loss

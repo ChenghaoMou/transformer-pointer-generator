@@ -191,3 +191,12 @@ class Batch:
 
         return Batch(src_tensor, src_full_tensor, src_mask, tgt_tensor, tgt_full_tensor, tgt_mask, base_vocab,
                      ext_vocab)
+
+
+if __name__ == '__main__':
+    base_vocab = Vocab()
+    base_vocab.load_vocab('data/joint.vocab')
+    dataset = base_vocab.load_dataset(open('data/train.src'),
+                                      open('data/train.tgt'))
+    for batch in Batch.from_dataset(dataset, base_vocab, batch_size=1024):
+        print(batch.src.size(0), (torch.nonzero(batch.src)).size(0), batch.src.numel())
