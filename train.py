@@ -93,7 +93,7 @@ def run_batch(batch: Batch, model: nn.Module, loss_compute: Callable, step: int,
     accuracy = final_pred.long().eq(batch.tgt_full[:, 1:]).masked_fill_(
         invalid_targets, 0).long().sum()
 
-    return loss, perplexity, 100 * accuracy / batch.ntokens, batch_size
+    return loss, perplexity, accuracy, batch_size, batch.ntokens
 
 
 def run_epoch(data_iter: Iterator, model: nn.Module, loss_compute: Callable, start_symbol: int = 1,
@@ -208,6 +208,10 @@ if __name__ == "__main__":
 
     while step <= args['--steps']:
 
+        curr_loss = 0. 
+        curr_tokens = 0 
+        curr_correct = 0
+
         data_iterator = Batch.from_dataset(train_dataset, base_vocab, batch_size=args['--batch_size'], device=device)
 
         for j, batch in enumerate(data_iterator):
@@ -216,7 +220,12 @@ if __name__ == "__main__":
 
             model.train()
 
-            loss, perplexity, accuracy, num_sents = run_batch(batch, model, train_loss_compute, step=step)
+            loss, perplexity, correct, num_sents, num_tokens = run_batch(batch, model, train_loss_compute, step=step)
+            
+            curr_correct += correct
+            curr_tokens += num_tokens
+            curr_loss += loss 
+
             step += 1
             if device == 'cuda':
                 mem_size = (torch.cuda.memory_allocated() + torch.cuda.memory_cached()) / 1024 / 1024
@@ -264,9 +273,11 @@ if __name__ == "__main__":
 
             if step % 50 == 0:
                 pbar.set_postfix_str(
-                    'Memory: {:.2f}MB|{}, Loss: {:.2f}, Ppl: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
-                                                                                               batch.src.size(0),
-                                                                                               loss/batch.src.size(0),
-                                                                                               perplexity/batch.src.size(0),
-                                                                                               accuracy))
+                    'Memory: {:.2f}MB, Loss: {:.2f}, Ppl: {:.2f}, Accuracy: {:.2f}%'.format(mem_size,
+                                                                                            curr_loss,
+                                                                                            math.exp(perplexity/curr_tokens),
+                                                                                            100 * curr_correct/curr_tokens))
+                curr_loss = 0.  
+                curr_tokens = 0 
+                curr_correct = 0
                 pbar.update(50)
