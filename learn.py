@@ -1,0 +1,212 @@
+from collections import deque
+
+import torch
+import math
+import os
+import argparse
+import time
+
+from torchtext import datasets, data
+from tqdm import tqdm
+import dill
+
+from torchnlp.metrics import get_moses_multi_bleu
+from transformer_pg.model import Transformer, ParallelTransformer
+from transformer_pg.optim import get_std_opt
+from transformer_pg.loss import LabelSmoothing, SimpleLossCompute, NLL
+
+device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+device_ids = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
+os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, range(torch.cuda.device_count())))
+
+
+def run_batch(batch, model, loss_compute, pad, curr_step):
+    batch.src_mask = (batch.src == pad).to(batch.src.device)
+    batch.trg_mask = (batch.trg[:-1] == pad).to(batch.src.device)
+    batch.num_token = (batch.trg[1:] != pad).data.sum()
+
+    trg_mask = model.generate_square_subsequent_mask(batch.trg[:-1].size(0))
+    N = batch.src_mask.size(1)
+
+    out = model.forward(
+        batch.src,
+        batch.trg[:-1],
+        src_key_padding_mask=batch.src_mask,
+        tgt_key_padding_mask=batch.trg_mask,
+        tgt_mask=trg_mask.unsqueeze(1).repeat([1, N, 1]).to(batch.src.device)
+    )
+
+    loss, correct = loss_compute(out, batch.trg[1:], curr_step, batch.num_token)
+
+    translation = torch.argmax(out, dim=-1).transpose(0, 1).cpu().detach().numpy()
+    translation = [''.join(field.vocab.itos[t] for t in ex).replace('▁', ' ') for ex in translation]
+    reference = [''.join(field.vocab.itos[t] for t in ex).replace('▁', ' ') for ex in
+                 batch.trg[1:].transpose(0, 1).cpu().detach().numpy()]
+
+    return loss, correct, batch.num_token, translation, reference
+
+
+def run_epoch(data_iter, model, loss_compute, pad):
+    total_loss = 0
+    total_correct = 0
+    total_tokens = 0
+    total_ref = []
+    total_hyp = []
+
+    for batch in data_iter:
+        loss, correct, num_token, translation, reference = run_batch(batch, model, loss_compute, pad, curr_step=0)
+        total_loss += loss
+        total_correct += correct
+        total_hyp.extend(translation)
+        total_ref.extend(reference)
+        total_tokens += num_token
+
+    return total_loss, total_correct, total_tokens, total_ref, total_hyp
+
+
+def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000,
+         eval_step=1000, report_step=50, pad=0):
+    start = time.time()
+
+    # total_tokens = 0
+    # total_loss = 0
+    # total_correct = 0
+    # total_hyp = []
+    # total_ref = []
+
+    curr_hyp = []
+    curr_ref = []
+    curr_tokens = 0
+    curr_loss = 0
+    curr_correct = 0
+    curr_step = 0
+
+    pbar = tqdm(range(steps))
+    checkpoints = deque()
+
+    while curr_step <= steps:
+
+        batch = next(iter(train_iter))
+        curr_step += 1
+
+        model.train()
+        loss, correct, num_token, translation, reference = run_batch(batch, model, train_loss, pad, curr_step)
+
+        # total_hyp.extend(translation)
+        # total_ref.extend(reference)
+        # total_loss += loss
+        # total_correct += correct
+        # total_tokens += num_token
+
+        curr_hyp.extend(translation)
+        curr_ref.extend(reference)
+        curr_loss += loss
+        curr_correct += correct
+        curr_tokens += num_token
+
+        if curr_step % report_step == 0:
+            elapsed = time.time() - start
+            pbar.update(50)
+            pbar.set_postfix_str(
+                f"Step: {curr_step:>7}, Size: {curr_tokens // 50:>7}/B, Loss: {curr_loss / curr_tokens:>10.2f}, "
+                f"Ppl: {math.exp(curr_loss / curr_tokens) if curr_loss / curr_tokens < 300 else float('inf'):>10.2f}, "
+                f"Accuracy: {100 * curr_correct / curr_tokens:.2f}%, Speed: {curr_tokens // elapsed:>7}/s, "
+                f"BLEU: {get_moses_multi_bleu(curr_hyp, curr_ref, lowercase=False):.3f}")
+
+            start = time.time()
+
+            curr_tokens = 0
+            curr_correct = 0
+            curr_loss = 0
+            curr_ref = []
+            curr_hyp = []
+
+        if curr_step % eval_step == 0:
+
+            if len(checkpoints) == 10:
+                os.remove(checkpoints.popleft())
+
+            torch.save({
+                'model': model.state_dict(),
+                'field': field,
+            },
+                f'data/tfm-{curr_step}.pt',
+                pickle_module=dill
+            )
+
+            checkpoints.append(f'data/tfm-{curr_step}.pt')
+
+            with torch.no_grad():
+                model.eval()
+                eval_loss, eval_correct, eval_tokens, eval_ref, eval_hyp = run_epoch(eval_iter, model, dev_loss, pad)
+                pbar.write(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
+                           f"Ppl: {math.exp(eval_loss / eval_tokens) if eval_loss / eval_tokens < 300 else float('inf'):>10.2f}, "
+                           f"Accuracy: {100 * eval_correct / eval_tokens:.2f}%, "
+                           f"BLEU: {get_moses_multi_bleu(eval_hyp, eval_ref, lowercase=False):.2f}")
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser('Training script')
+
+    parser.add_argument('--train_prefix', required=True, type=str,
+                        help='Training file prefix')
+    parser.add_argument('--train_ext', required=True, nargs=2, type=str,
+                        help='Training file extensions')
+    parser.add_argument('--vocab_size', '-v', required=True, type=int,
+                        help='Maximum vocab size')
+    parser.add_argument('--device_ids', nargs='+', type=int,
+                        help='Device ids for CUDA')
+    parser.add_argument('--steps', type=int, required=True,
+                        help='Training step')
+    parser.add_argument('--valid_prefix', type=str,
+                        help='Validation file prefix')
+    parser.add_argument('--valid_ext', nargs=2, type=str,
+                        help='Validation file extensions')
+    parser.add_argument('--valid_step', type=int, default=1000,
+                        help='Validation step')
+
+    field = data.Field(init_token='<bos>', eos_token='<eos>')
+
+    train = datasets.TranslationDataset(path='data/bpe.train_1',
+                                        exts=('.tgl', '.en'),
+                                        fields=(('src', field), ('trg', field)),
+                                        # filter_pred=lambda e: len(e.src) <= 256
+                                        )
+    dev = datasets.TranslationDataset(path='data/bpe.tune', exts=('.tgl', '.en'),
+                                      fields=(('src', field), ('trg', field)))
+    test = datasets.TranslationDataset(path='data/bpe.test', exts=('.tgl', '.en'),
+                                       fields=(('src', field), ('trg', field)))
+
+    field.build_vocab(train, max_size=8000)
+
+    vocab_size = len(field.vocab.stoi)
+    pad_index = field.vocab.stoi['<pad>']
+
+    model = ParallelTransformer(
+        module=Transformer(vocab_size).to(device),
+        device_ids=device_ids,
+        output_device=device,
+        dim=1
+    )
+
+    criterion = NLL(padding_idx=pad_index)
+    opt = get_std_opt(model)
+    train_loss = SimpleLossCompute(criterion, opt, accumulation=1)
+    eval_loss = SimpleLossCompute(criterion, None)
+
+    train_iter = data.BucketIterator(train,
+                                     batch_size=2048,
+                                     batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
+                                     device=device,
+                                     shuffle=True,
+                                     repeat=True,
+                                     )
+    eval_iter = data.BucketIterator(dev,
+                                    batch_size=2048,
+                                    batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
+                                    device=device,
+                                    train=False)
+
+    main(train_iter, eval_iter, model, train_loss, eval_loss, field,
+         steps=200000, eval_step=1000, report_step=50, pad=pad_index)
