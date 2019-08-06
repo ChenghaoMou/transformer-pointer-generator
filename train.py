@@ -220,11 +220,11 @@ if __name__ == '__main__':
 
     criterion = LabelSmoothing(vocab_size, padding_idx=pad_index, smoothing=0.1)
     opt = get_std_opt(model)
-    train_loss = SimpleLossCompute(criterion, opt, accumulation=8)
+    train_loss = SimpleLossCompute(criterion, opt, accumulation=1)
     eval_loss = SimpleLossCompute(criterion, None)
 
     train_iter = data.BucketIterator(train,
-                                     batch_size=1024,
+                                     batch_size=2048,
                                      batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
                                      device=device,
                                      shuffle=True,

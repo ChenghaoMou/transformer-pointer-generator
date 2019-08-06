@@ -171,6 +171,7 @@ class Transformer(Module):
         output = self.decoder(tgt, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
                               tgt_key_padding_mask=tgt_key_padding_mask,
                               memory_key_padding_mask=memory_key_padding_mask)
+
         return torch.log_softmax(self.proj(output), dim=-1)
 
     @staticmethod
@@ -427,6 +428,36 @@ class PositionalEncoding(Module):
     def forward(self, x):
         x = x + Variable(self.pe[:x.size(0)], requires_grad=False)
         return self.dropout(x)
+
+
+class CopyGenerator(Module):
+
+    def __init__(self, vocab_size, d_model):
+        super(CopyGenerator, self).__init__()
+        self.vocab_size = vocab_size
+        self.gen_proj = Linear(d_model, vocab_size)
+        self.copy_proj = Linear(d_model, vocab_size)
+        self.prob_proj = Linear(d_model, 1)
+
+    def forward(self, decode_output, decode_attn, memory):
+        """
+        Generate final vocab distribution.
+
+        :param decode_attn: [B, T, S]
+        :param decode_output: [T, B, H]
+        :param memory: [S, B, H]
+        :return:
+        """
+
+        assert decode_attn.size(0) == decode_output.size(1)
+        assert decode_output.size(0) == memory.size(1)
+
+        context = torch.matmul(decode_attn, memory.transpose(0, 1)).transpose(0, 1)     # [T, B, H]
+        prob = torch.sigmoid(self.prob_proj(context))                                   # [T, B, H] -> [T, B 1]
+        gen_logits = prob * torch.softmax(self.gen_proj(decode_output))                 # [T, B, V]
+        copy_logits = (1 - prob) * torch.softmax(self.copy_proj(context))               # [T, B, V]
+
+        return gen_logits + copy_logits
 
 
 def _get_clones(module, N):
