@@ -5,6 +5,7 @@ import math
 import os
 import argparse
 import time
+from itertools import tee
 
 from torchtext import datasets, data
 from tqdm import tqdm
@@ -13,17 +14,14 @@ import dill
 from torchnlp.metrics import get_moses_multi_bleu
 from transformer_pg.model import Transformer, ParallelTransformer
 from transformer_pg.optim import get_std_opt
-from transformer_pg.loss import LabelSmoothing, SimpleLossCompute, NLL
-
-device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-device_ids = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
-os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, range(torch.cuda.device_count())))
+from transformer_pg.loss import LabelSmoothing, SimpleLossCompute
+from transformer_pg.utils.statistics import dataset_statistics
 
 
 def run_batch(batch, model, loss_compute, pad, curr_step):
     batch.src_mask = (batch.src == pad).to(batch.src.device)
     batch.trg_mask = (batch.trg[:-1] == pad).to(batch.src.device)
-    batch.num_token = (batch.trg[1:] != pad).data.sum()
+    batch.num_token = (batch.trg[1:] != pad).data.sum().item()
 
     trg_mask = model.generate_square_subsequent_mask(batch.trg[:-1].size(0))
     N = batch.src_mask.size(1)
@@ -65,7 +63,7 @@ def run_epoch(data_iter, model, loss_compute, pad):
 
 
 def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000,
-         eval_step=1000, report_step=50, pad=0):
+         eval_step=1000, report_step=50, pad=0, early_stop=6):
     start = time.time()
 
     # total_tokens = 0
@@ -83,6 +81,8 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
 
     pbar = tqdm(range(steps))
     checkpoints = deque()
+    plateau = 0
+    prev_eval_score = float('inf')
 
     while curr_step <= steps:
 
@@ -91,7 +91,7 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
 
         model.train()
         loss, correct, num_token, translation, reference = run_batch(batch, model, train_loss, pad, curr_step)
-
+        # print(loss)
         # total_hyp.extend(translation)
         # total_ref.extend(reference)
         # total_loss += loss
@@ -111,7 +111,7 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                 f"Step: {curr_step:>7}, Size: {curr_tokens // 50:>7}/B, Loss: {curr_loss / curr_tokens:>10.2f}, "
                 f"Ppl: {math.exp(curr_loss / curr_tokens) if curr_loss / curr_tokens < 300 else float('inf'):>10.2f}, "
                 f"Accuracy: {100 * curr_correct / curr_tokens:.2f}%, Speed: {curr_tokens // elapsed:>7}/s, "
-                f"BLEU: {get_moses_multi_bleu(curr_hyp, curr_ref, lowercase=False):.3f}")
+                f"BLEU: {get_moses_multi_bleu(curr_hyp, curr_ref, lowercase=False):.10f}")
 
             start = time.time()
 
@@ -138,11 +138,26 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
 
             with torch.no_grad():
                 model.eval()
-                eval_loss, eval_correct, eval_tokens, eval_ref, eval_hyp = run_epoch(eval_iter, model, dev_loss, pad)
+                eval_iter, curr_eval_iter = tee(eval_iter)
+                eval_loss, eval_correct, eval_tokens, eval_ref, eval_hyp = run_epoch(curr_eval_iter, model, dev_loss, pad)
+                eval_ppl = math.exp(eval_loss / eval_tokens) if eval_loss / eval_tokens < 300 else float('inf')
+                eval_acc = 100 * eval_correct / eval_tokens
+                eval_bleu = get_moses_multi_bleu(eval_hyp, eval_ref, lowercase=False)
+
                 pbar.write(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
-                           f"Ppl: {math.exp(eval_loss / eval_tokens) if eval_loss / eval_tokens < 300 else float('inf'):>10.2f}, "
-                           f"Accuracy: {100 * eval_correct / eval_tokens:.2f}%, "
-                           f"BLEU: {get_moses_multi_bleu(eval_hyp, eval_ref, lowercase=False):.2f}")
+                           f"Ppl: {eval_ppl:>10.2f}, "
+                           f"Accuracy: {eval_acc:.2f}%, "
+                           f"BLEU: {eval_bleu:.2f}")
+
+                if early_stop > 0:
+
+                    if eval_bleu <= prev_eval_score:
+                        plateau += 1
+                        if plateau == early_stop:
+                            pbar.write(f'Early stopping after {curr_step} steps')
+                    else:
+                        plateau = 0
+                        prev_eval_score = eval_bleu
 
 
 if __name__ == '__main__':
@@ -155,8 +170,6 @@ if __name__ == '__main__':
                         help='Training file extensions')
     parser.add_argument('--vocab_size', '-v', required=True, type=int,
                         help='Maximum vocab size')
-    parser.add_argument('--device_ids', nargs='+', type=int,
-                        help='Device ids for CUDA')
     parser.add_argument('--steps', type=int, required=True,
                         help='Training step')
     parser.add_argument('--valid_prefix', type=str,
@@ -166,47 +179,62 @@ if __name__ == '__main__':
     parser.add_argument('--valid_step', type=int, default=1000,
                         help='Validation step')
 
+    args = parser.parse_args()
+
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device_ids = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
+    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, range(torch.cuda.device_count())))
+
     field = data.Field(init_token='<bos>', eos_token='<eos>')
 
-    train = datasets.TranslationDataset(path='data/bpe.train_1',
-                                        exts=('.tgl', '.en'),
-                                        fields=(('src', field), ('trg', field)),
-                                        # filter_pred=lambda e: len(e.src) <= 256
+    train = datasets.TranslationDataset(path=args.train_prefix,
+                                        exts=args.train_ext,
+                                        fields=list(zip(['src', 'trg'], [field, field])),
+                                        filter_pred=lambda e: len(e.src) <= 256 and len(e.trg) <= 256
                                         )
-    dev = datasets.TranslationDataset(path='data/bpe.tune', exts=('.tgl', '.en'),
-                                      fields=(('src', field), ('trg', field)))
-    test = datasets.TranslationDataset(path='data/bpe.test', exts=('.tgl', '.en'),
-                                       fields=(('src', field), ('trg', field)))
+    dev = datasets.TranslationDataset(path=args.valid_prefix, exts=args.valid_ext,
+                                      fields=list(zip(['src', 'trg'], [field, field])))
 
-    field.build_vocab(train, max_size=8000)
+    print("""
+    Average source length: {:.2f}
+    Minimum source length: {}
+    Maximum source length: {}
+    99.9% percentile length: {}
+    
+    Average target length: {:.2f}
+    Minimum target length: {}
+    Maximum target length: {}
+    99.9% percentile length: {}
+    """.format(*dataset_statistics(train)))
 
+    field.build_vocab(train, max_size=args.vocab_size)
     vocab_size = len(field.vocab.stoi)
     pad_index = field.vocab.stoi['<pad>']
 
     model = ParallelTransformer(
-        module=Transformer(vocab_size).to(device),
+        module=Transformer(vocab_size, dropout=0.2).to(device),
         device_ids=device_ids,
         output_device=device,
         dim=1
     )
 
-    criterion = NLL(padding_idx=pad_index)
+    criterion = LabelSmoothing(vocab_size, padding_idx=pad_index, smoothing=0.1)
     opt = get_std_opt(model)
-    train_loss = SimpleLossCompute(criterion, opt, accumulation=1)
+    train_loss = SimpleLossCompute(criterion, opt, accumulation=8)
     eval_loss = SimpleLossCompute(criterion, None)
 
     train_iter = data.BucketIterator(train,
-                                     batch_size=2048,
+                                     batch_size=1024,
                                      batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
                                      device=device,
                                      shuffle=True,
                                      repeat=True,
                                      )
     eval_iter = data.BucketIterator(dev,
-                                    batch_size=2048,
+                                    batch_size=256,
                                     batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
                                     device=device,
                                     train=False)
 
     main(train_iter, eval_iter, model, train_loss, eval_loss, field,
-         steps=200000, eval_step=1000, report_step=50, pad=pad_index)
+         steps=80000, eval_step=1000, report_step=50, pad=pad_index)
