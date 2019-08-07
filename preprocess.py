@@ -1,5 +1,5 @@
 import os
-from transformer_pg.utils.BPE import BPELearner
+from transformer.utils.BPE import BPELearner
 import argparse
 
 if __name__ == '__main__':

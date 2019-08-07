@@ -2,9 +2,8 @@ import torch
 import os
 
 from tqdm import tqdm
-
-from transformer_pg.beam import beam_decode
-from transformer_pg.model import Transformer, ParallelTransformer
+from transformer.beam import beam_decode
+from transformer.model import Transformer, ParallelTransformer
 from torchtext import data, datasets
 
 
@@ -18,6 +17,7 @@ def run_epoch(data_iter, model, field, device):
         mem = mem.transpose(0, 1)
         result.extend(beam_decode(model, mem, field, device, beam=5))
 
+        print()
         print('>>' + ''.join(field.vocab.itos[x] for x in batch.src[:, -1] if x > 3).replace('▁', ' '))
         print('>>' + ''.join(field.vocab.itos[x] for x in batch.trg[:, -1] if x > 3).replace('▁', ' '))
         print('>>' + ''.join(field.vocab.itos[x] for x in result[-1][0] if x > 3).replace('▁', ' '))
@@ -29,11 +29,11 @@ def run_epoch(data_iter, model, field, device):
 if __name__ == '__main__':
 
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    device_ids = [f'cuda:{i}' for i in reversed(range(1))]
+    device_ids = [f'cuda:{i}' for i in reversed(range(torch.cuda.device_count()))]
 
     os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, range(torch.cuda.device_count())))
 
-    resource = torch.load('data/tfm-40768.pt')
+    resource = torch.load('data/tfm-20000.pt', map_location=device)
     model_dict, field = resource['model'], resource['field']
 
     vocab_size = len(field.vocab.stoi)
@@ -49,14 +49,14 @@ if __name__ == '__main__':
     model.load_state_dict(model_dict)
 
     test = datasets.TranslationDataset(
-        path='data/bpe.test',
+        path='data/elisa.test-bpe',
         exts=('.tgl', '.en'),
         fields=(('src', field), ('trg', field))
     )
 
     test_iter = data.BucketIterator(
         test,
-        batch_size=256,
+        batch_size=8,
         batch_size_fn=lambda ex, bs, sz: sz + len(ex.src), device=device,
         train=False
     )

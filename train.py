@@ -12,13 +12,14 @@ from tqdm import tqdm
 import dill
 
 from torchnlp.metrics import get_moses_multi_bleu
-from transformer_pg.model import Transformer, ParallelTransformer
-from transformer_pg.optim import get_std_opt
-from transformer_pg.loss import LabelSmoothing, SimpleLossCompute
-from transformer_pg.utils.statistics import dataset_statistics
+from transformer.model import Transformer, ParallelTransformer
+from transformer.optim import get_std_opt
+from transformer.loss import LabelSmoothing, SimpleLossCompute
+from transformer.utils.statistics import dataset_statistics
 
 
 def run_batch(batch, model, loss_compute, pad, curr_step):
+
     batch.src_mask = (batch.src == pad).to(batch.src.device)
     batch.trg_mask = (batch.trg[:-1] == pad).to(batch.src.device)
     batch.num_token = (batch.trg[1:] != pad).data.sum().item()
@@ -66,12 +67,6 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
          eval_step=1000, report_step=50, pad=0, early_stop=6):
     start = time.time()
 
-    # total_tokens = 0
-    # total_loss = 0
-    # total_correct = 0
-    # total_hyp = []
-    # total_ref = []
-
     curr_hyp = []
     curr_ref = []
     curr_tokens = 0
@@ -82,7 +77,7 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
     pbar = tqdm(range(steps))
     checkpoints = deque()
     plateau = 0
-    prev_eval_score = float('inf')
+    prev_eval_score = 0.
 
     while curr_step <= steps:
 
@@ -147,17 +142,18 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                 pbar.write(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
                            f"Ppl: {eval_ppl:>10.2f}, "
                            f"Accuracy: {eval_acc:.2f}%, "
-                           f"BLEU: {eval_bleu:.2f}")
+                           f"BLEU: {eval_bleu:.2f} {'↑' if eval_bleu > prev_eval_score else '↓'}")
 
                 if early_stop > 0:
 
                     if eval_bleu <= prev_eval_score:
+                        # prev_eval_score = eval_bleu
                         plateau += 1
                         if plateau == early_stop:
                             pbar.write(f'Early stopping after {curr_step} steps')
                     else:
-                        plateau = 0
                         prev_eval_score = eval_bleu
+                        plateau = 0
 
 
 if __name__ == '__main__':
@@ -170,6 +166,10 @@ if __name__ == '__main__':
                         help='Training file extensions')
     parser.add_argument('--vocab_size', '-v', required=True, type=int,
                         help='Maximum vocab size')
+    parser.add_argument('--dropout', default=0.2, type=float,
+                        help='Dropout rate')
+    parser.add_argument('--smoothing', default=0.1, type=float,
+                        help='LabelSmoothing')
     parser.add_argument('--steps', type=int, required=True,
                         help='Training step')
     parser.add_argument('--valid_prefix', type=str,
@@ -178,6 +178,10 @@ if __name__ == '__main__':
                         help='Validation file extensions')
     parser.add_argument('--valid_step', type=int, default=1000,
                         help='Validation step')
+    parser.add_argument('--batch_size', type=int, default=2048,
+                        help='Batch size in number of tokens')
+    parser.add_argument('--resume', '-r', type=str,
+                        help='Resume training from checkpoint')
 
     args = parser.parse_args()
 
@@ -185,7 +189,12 @@ if __name__ == '__main__':
     device_ids = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
     os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, range(torch.cuda.device_count())))
 
-    field = data.Field(init_token='<bos>', eos_token='<eos>')
+    if args.resume:
+        resource = torch.load(args.resume, map_location=device)
+        model_dict, field = resource['model'], resource['field']
+    else:
+        model_dict = None
+        field = data.Field(init_token='<bos>', eos_token='<eos>')
 
     train = datasets.TranslationDataset(path=args.train_prefix,
                                         exts=args.train_ext,
@@ -207,34 +216,38 @@ if __name__ == '__main__':
     99.9% percentile length: {}
     """.format(*dataset_statistics(train)))
 
-    field.build_vocab(train, max_size=args.vocab_size)
+    if not getattr(field, 'vocab'):
+        field.build_vocab(train, max_size=args.vocab_size)
+
     vocab_size = len(field.vocab.stoi)
     pad_index = field.vocab.stoi['<pad>']
 
     model = ParallelTransformer(
-        module=Transformer(vocab_size, dropout=0.2).to(device),
+        module=Transformer(vocab_size, dropout=args.dropout).to(device),
         device_ids=device_ids,
         output_device=device,
         dim=1
     )
+    if model_dict is not None:
+        model.load_state_dict(None)
 
-    criterion = LabelSmoothing(vocab_size, padding_idx=pad_index, smoothing=0.1)
+    criterion = LabelSmoothing(vocab_size, padding_idx=pad_index, smoothing=args.smoothing)
     opt = get_std_opt(model)
     train_loss = SimpleLossCompute(criterion, opt, accumulation=1)
     eval_loss = SimpleLossCompute(criterion, None)
 
     train_iter = data.BucketIterator(train,
-                                     batch_size=2048,
+                                     batch_size=args.batch_size,
                                      batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
                                      device=device,
                                      shuffle=True,
                                      repeat=True,
                                      )
     eval_iter = data.BucketIterator(dev,
-                                    batch_size=256,
+                                    batch_size=args.batch_size,
                                     batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
                                     device=device,
                                     train=False)
 
     main(train_iter, eval_iter, model, train_loss, eval_loss, field,
-         steps=80000, eval_step=1000, report_step=50, pad=pad_index)
+         steps=args.steps, eval_step=args.valid_step, report_step=50, pad=pad_index)

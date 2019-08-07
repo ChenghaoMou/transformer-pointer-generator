@@ -1,3 +1,6 @@
 temp*
 .idea/*
 .vscode/*
+__pycache__
+.DS_Store
+data/*.ptgit
