@@ -5,6 +5,7 @@ import math
 import os
 import argparse
 import time
+import re
 from itertools import tee
 
 from torchtext import datasets, data
@@ -64,7 +65,7 @@ def run_epoch(data_iter, model, loss_compute, pad):
 
 
 def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000,
-         eval_step=1000, report_step=50, pad=0, early_stop=6):
+         eval_step=1000, report_step=50, pad=0, early_stop=6, curr_step=0):
     start = time.time()
 
     curr_hyp = []
@@ -72,9 +73,9 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
     curr_tokens = 0
     curr_loss = 0
     curr_correct = 0
-    curr_step = 0
 
     pbar = tqdm(range(steps))
+    if curr_step > 0: pbar.update(curr_step)
     checkpoints = deque()
     plateau = 0
     prev_eval_score = 0.
@@ -191,10 +192,12 @@ if __name__ == '__main__':
 
     if args.resume:
         resource = torch.load(args.resume, map_location=device)
-        model_dict, field = resource['model'], resource['field']
+        model_dict = resource['model']
+
     else:
         model_dict = None
-        field = data.Field(init_token='<bos>', eos_token='<eos>')
+
+    field = data.Field(init_token='<bos>', eos_token='<eos>')
 
     train = datasets.TranslationDataset(path=args.train_prefix,
                                         exts=args.train_ext,
@@ -216,7 +219,7 @@ if __name__ == '__main__':
     99.9% percentile length: {}
     """.format(*dataset_statistics(train)))
 
-    if not getattr(field, 'vocab'):
+    if not hasattr(field, 'vocab'):
         field.build_vocab(train, max_size=args.vocab_size)
 
     vocab_size = len(field.vocab.stoi)
@@ -229,7 +232,7 @@ if __name__ == '__main__':
         dim=1
     )
     if model_dict is not None:
-        model.load_state_dict(None)
+        model.load_state_dict(model_dict)
 
     criterion = LabelSmoothing(vocab_size, padding_idx=pad_index, smoothing=args.smoothing)
     opt = get_std_opt(model)
@@ -248,6 +251,8 @@ if __name__ == '__main__':
                                     batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
                                     device=device,
                                     train=False)
-
+    curr_step = 0 if args.resume is None else int(re.findall('[0-9]+', args.resume)[0])
+    if curr_step > 0:
+        print(f'Resuming from {curr_step} steps')
     main(train_iter, eval_iter, model, train_loss, eval_loss, field,
-         steps=args.steps, eval_step=args.valid_step, report_step=50, pad=pad_index)
+         steps=args.steps, eval_step=args.valid_step, report_step=50, pad=pad_index, curr_step=curr_step+1)
