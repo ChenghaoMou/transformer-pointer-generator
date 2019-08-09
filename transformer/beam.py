@@ -26,7 +26,7 @@ def beam_decode(model, src, memory, field, device, beam=5):
     top_k = 1
     decoded_batch = []
 
-    for idx in tqdm(range(memory.size(0)), disable=True):
+    for idx in tqdm(range(memory.size(1)), disable=True):
 
         decoder_input = torch.LongTensor([field.vocab.stoi['<bos>']]).to(device).reshape(-1, 1)
 
@@ -56,7 +56,7 @@ def beam_decode(model, src, memory, field, device, beam=5):
                 else:
                     continue
 
-            decoder_output = model.decode(src, decoder_input, memory[idx:idx+1])    # [T, 1, V]
+            decoder_output = model.decode(src, decoder_input, memory[:, idx:idx+1])    # [T, 1, V]
 
             log_prob, indexes = torch.topk(decoder_output, beam_width)
             next_nodes = []
