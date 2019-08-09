@@ -440,10 +440,10 @@ class CopyGenerator(Module):
 
         context = torch.matmul(decode_attn, memory.transpose(0, 1)).transpose(0, 1)     # [T, B, H]
         prob = torch.sigmoid(self.prob_proj(context))                                   # [T, B, H] -> [T, B 1]
-        gen_logits = prob * torch.softmax(self.gen_proj(decode_output))                 # [T, B, V]
+        gen_logits = prob * torch.softmax(self.gen_proj(decode_output), dim=-1)                 # [T, B, V]
         copy_logits = torch.zeros_like(gen_logits)                                      # [T, B, V]
         copy_logits = copy_logits.scatter_add(2, src_full, decode_attn.transpose(0, 1))  # [T, B, V]
-        copy_logits = (1 - prob) * torch.softmax(copy_logits)                           # [T, B, V]
+        copy_logits = (1 - prob) * torch.softmax(copy_logits, dim=-1)                           # [T, B, V]
 
         return torch.log(gen_logits + copy_logits)
 
