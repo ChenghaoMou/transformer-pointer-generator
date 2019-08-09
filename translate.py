@@ -1,7 +1,7 @@
 import torch
 import os
 import argparse
-from tqdm import tqdm
+from loguru import logger
 from transformer.beam import beam_decode
 from transformer.model import Transformer, ParallelTransformer
 from torchtext import data, datasets
@@ -10,18 +10,18 @@ from torchtext import data, datasets
 def run_epoch(data_iter, model, field, device):
 
     result = []
-    for i, batch in tqdm(enumerate(data_iter)):
+    for i, batch in enumerate(data_iter):
 
         batch.src_mask = (batch.src == field.vocab.stoi['<pad>']).to(batch.src.device)
         mem = model.encode(batch.src, src_mask=None, src_key_padding_mask=batch.src_mask)
         mem = mem.transpose(0, 1)
         result.extend(beam_decode(model, mem, field, device, beam=5))
 
-        print()
-        print('>>' + ''.join(field.vocab.itos[x] for x in batch.src[:, -1] if x > 3).replace('▁', ' '))
-        print('>>' + ''.join(field.vocab.itos[x] for x in batch.trg[:, -1] if x > 3).replace('▁', ' '))
-        print('>>' + ''.join(field.vocab.itos[x] for x in result[-1][0] if x > 3).replace('▁', ' '))
-        print()
+        
+        logger.info('>>' + ''.join(field.vocab.itos[x] for x in batch.src[:, -1] if x > 3).replace('▁', ' '))
+        logger.info('>>' + ''.join(field.vocab.itos[x] for x in batch.trg[:, -1] if x > 3).replace('▁', ' '))
+        logger.info('>>' + ''.join(field.vocab.itos[x] for x in result[-1][0] if x > 3).replace('▁', ' '))
+        
 
     return result
 
@@ -33,6 +33,7 @@ if __name__ == '__main__':
     parser.add_argument('--field', '-f', type=str, required=True, help='Field file')
     parser.add_argument('--prefix', type=str, required=True, help='Input prefix')
     parser.add_argument('--ext', nargs=2, help='Extension')
+    parser.add_argument('--log', type=str, default='trans.log', help='Logging file')
 
     args = parser.parse_args()
 

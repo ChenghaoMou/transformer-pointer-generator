@@ -26,8 +26,8 @@ class Noam:
         if step is None:
             step = self._step
         return self.factor * \
-               (self.model_size ** (-0.5) *
-                min(step ** (-0.5), step * self.warm_up ** (-1.5)))
+            (self.model_size ** (-0.5) *
+             min(step ** (-0.5), step * self.warm_up ** (-1.5)))
 
 
 def get_std_opt(model):

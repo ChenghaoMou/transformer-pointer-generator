@@ -73,7 +73,7 @@ class Transformer(Module):
             decoder_norm = LayerNorm(d_model)
             self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm)
 
-        self.proj = Linear(d_model, vocab_size)
+        self.generator = Generator(vocab_size, d_model)
 
         self._reset_parameters()
 
@@ -127,29 +127,8 @@ class Transformer(Module):
             >>> output = transformer_model(src, tgt, src_mask=src_mask, tgt_mask=tgt_mask)
         """
 
-        # if src_key_padding_mask is not None: src_key_padding_mask = src_key_padding_mask.transpose(0, 1)
-        # if tgt_key_padding_mask is not None: tgt_key_padding_mask = tgt_key_padding_mask.transpose(0, 1)
-        #
-        # if tgt_mask is not None: tgt_mask = tgt_mask[:, 0, ...]
-        #
-        # src = self.src_embed(src)
-        # tgt = self.tgt_embed(tgt)
-
-        # if src_mask is not None: src_mask = src_mask[0]
-        # if tgt_mask is not None: tgt_mask = tgt_mask[0]
-        # if memory_mask is not None: memory_mask = memory_mask[0]
-
-        # print(tgt is None, src is None, tgt_mask is None, tgt_key_padding_mask is None, src_key_padding_mask is None)
-        # print(tgt_mask.shape, src.shape, tgt.shape, tgt_key_padding_mask.shape, src_key_padding_mask.shape)
-
-        # if src.size(1) != tgt.size(1):
-        #     raise RuntimeError("the batch number of src and tgt must be equal")
-        #
-        # if src.size(2) != self.d_model or tgt.size(2) != self.d_model:
-        #     raise RuntimeError("the feature number of src and tgt must be equal to d_model")
-
         memory = self.encode(src, src_mask, src_key_padding_mask)
-        output = self.decode(tgt, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
+        output = self.decode(src, tgt, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
                              tgt_key_padding_mask=tgt_key_padding_mask,
                              memory_key_padding_mask=memory_key_padding_mask)
 
@@ -163,16 +142,18 @@ class Transformer(Module):
 
         return self.encoder(src, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
 
-    def decode(self, tgt, memory, tgt_mask=None, memory_mask=None, tgt_key_padding_mask=None,
+    def decode(self, src, tgt, memory, tgt_mask=None, memory_mask=None, tgt_key_padding_mask=None,
                memory_key_padding_mask=None):
-        if tgt_key_padding_mask is not None: tgt_key_padding_mask = tgt_key_padding_mask.transpose(0, 1)
-        if tgt_mask is not None: tgt_mask = tgt_mask[:, 0, ...]
+        if tgt_key_padding_mask is not None:
+            tgt_key_padding_mask = tgt_key_padding_mask.transpose(0, 1)
+        if tgt_mask is not None:
+            tgt_mask = tgt_mask[:, 0, ...]
         tgt = self.tgt_embed(tgt)
-        output = self.decoder(tgt, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
-                              tgt_key_padding_mask=tgt_key_padding_mask,
-                              memory_key_padding_mask=memory_key_padding_mask)
+        output, attns = self.decoder(tgt, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
+                                     tgt_key_padding_mask=tgt_key_padding_mask,
+                                     memory_key_padding_mask=memory_key_padding_mask)
 
-        return torch.log_softmax(self.proj(output), dim=-1)
+        return self.generator(src, output, attns[-1], memory)
 
     @staticmethod
     def generate_square_subsequent_mask(sz):
@@ -269,17 +250,17 @@ class TransformerDecoder(Module):
             see the docs in Transformer class.
         """
         output = tgt
-
+        attns = []
         for i in range(self.num_layers):
-            output = self.layers[i](output, memory, tgt_mask=tgt_mask,
-                                    memory_mask=memory_mask,
-                                    tgt_key_padding_mask=tgt_key_padding_mask,
-                                    memory_key_padding_mask=memory_key_padding_mask)
+            output, attn = self.layers[i](output, memory, tgt_mask=tgt_mask,
+                                          memory_mask=memory_mask,
+                                          tgt_key_padding_mask=tgt_key_padding_mask,
+                                          memory_key_padding_mask=memory_key_padding_mask)
 
         if self.norm:
             output = self.norm(output)
 
-        return output
+        return output, attns
 
 
 class TransformerEncoderLayer(Module):
@@ -387,14 +368,14 @@ class TransformerDecoderLayer(Module):
                               key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
-        tgt2 = self.multihead_attn(tgt, memory, memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+        tgt2, attn = self.multihead_attn(tgt, memory, memory, attn_mask=memory_mask,
+                                         key_padding_mask=memory_key_padding_mask)
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
         tgt2 = self.linear2(self.dropout(F.relu(self.linear1(tgt))))
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
-        return tgt
+        return tgt, attn
 
 
 class TransformerEmbedding(Module):
@@ -417,8 +398,7 @@ class PositionalEncoding(Module):
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0., max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0., d_model, 2) *
-                             -(math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0., d_model, 2) * -(math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(1)
@@ -436,13 +416,13 @@ class CopyGenerator(Module):
         super(CopyGenerator, self).__init__()
         self.vocab_size = vocab_size
         self.gen_proj = Linear(d_model, vocab_size)
-        self.copy_proj = Linear(d_model, vocab_size)
         self.prob_proj = Linear(d_model, 1)
 
-    def forward(self, decode_output, decode_attn, memory):
+    def forward(self, src_full, decode_output, decode_attn, memory):
         """
         Generate final vocab distribution.
 
+        :param src_full: [S, B]
         :param decode_attn: [B, T, S]
         :param decode_output: [T, B, H]
         :param memory: [S, B, H]
@@ -451,13 +431,36 @@ class CopyGenerator(Module):
 
         assert decode_attn.size(0) == decode_output.size(1)
         assert decode_output.size(0) == memory.size(1)
+        batch_size, steps, seq = decode_attn.size()
+
+        src_full = src_full.transpose(0, 1).unsqueeze(0).repeat([steps, 1, 1])          # [T, B, S]
 
         context = torch.matmul(decode_attn, memory.transpose(0, 1)).transpose(0, 1)     # [T, B, H]
         prob = torch.sigmoid(self.prob_proj(context))                                   # [T, B, H] -> [T, B 1]
         gen_logits = prob * torch.softmax(self.gen_proj(decode_output))                 # [T, B, V]
-        copy_logits = (1 - prob) * torch.softmax(self.copy_proj(context))               # [T, B, V]
+        copy_logits = torch.zeros_like(gen_logits)                                      # [T, B, V]
+        copy_logits = copy_logits.scatter_add(2, src_full, decode_attn.transpose(0, 1))  # [T, B, V]
+        copy_logits = (1 - prob) * torch.softmax(copy_logits)                           # [T, B, V]
 
-        return gen_logits + copy_logits
+        return torch.log(gen_logits + copy_logits)
+
+
+class Generator(Module):
+
+    def __init__(self, vocab_size, d_model):
+        super(Generator, self).__init__()
+        self.vocab_size = vocab_size
+        self.gen_proj = Linear(d_model, vocab_size)
+
+    def forward(self, src_full, decode_output, decode_attn, memory):
+        """
+        Generate final vocab distribution.
+        :param decode_output: [T, B, H]
+        :return:
+        """
+
+        gen_logits = torch.log_softmax(self.gen_proj(decode_output))                 # [T, B, V]
+        return gen_logits
 
 
 def _get_clones(module, N):

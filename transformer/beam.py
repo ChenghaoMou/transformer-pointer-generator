@@ -40,12 +40,14 @@ def beam_decode(model, memory, field, device, beam=5):
         qsize = 1
 
         while True:
-            if qsize >= 2000: break
+            if qsize >= 2000:
+                break
 
             score, n = nodes.get()
             decoder_input = n.inp.reshape(-1, 1)
 
-            if n.len >= 256: break
+            if n.len >= 256:
+                break
 
             if n.idx == field.vocab.stoi['<eos>'] and n.inp is not None:
                 end_nodes.append((score, n))

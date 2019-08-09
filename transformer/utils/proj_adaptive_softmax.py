@@ -140,7 +140,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                     tail_logprob_i = F.log_softmax(tail_logit_i, dim=1)
 
                     logprob_i = head_logprob_i[:, -i] \
-                                + tail_logprob_i.gather(1, target_i[:, None]).squeeze(1)
+                        + tail_logprob_i.gather(1, target_i[:, None]).squeeze(1)
 
                 if (hasattr(self, 'keep_order') and self.keep_order) or keep_order:
                     nll.index_copy_(0, indices_i, -logprob_i)
