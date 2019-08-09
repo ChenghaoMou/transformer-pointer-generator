@@ -9,7 +9,7 @@ import re
 from itertools import tee
 
 from torchtext import datasets, data
-from tqdm import tqdm
+from loguru import logger
 import dill
 
 from torchnlp.metrics import get_moses_multi_bleu
@@ -74,8 +74,6 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
     curr_loss = 0
     curr_correct = 0
 
-    pbar = tqdm(range(steps))
-    if curr_step > 0: pbar.update(curr_step)
     checkpoints = deque()
     plateau = 0
     prev_eval_score = 0.
@@ -102,13 +100,13 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
 
         if curr_step % report_step == 0:
             elapsed = time.time() - start
-            pbar.update(50)
-            pbar.set_postfix_str(
+            
+            logger.info(
                 f"Step: {curr_step:>7}, Size: {curr_tokens // 50:>7}/B, Loss: {curr_loss / curr_tokens:>10.2f}, "
                 f"Ppl: {math.exp(curr_loss / curr_tokens) if curr_loss / curr_tokens < 300 else float('inf'):>10.2f}, "
                 f"Accuracy: {100 * curr_correct / curr_tokens:.2f}%, Speed: {curr_tokens // elapsed:>7}/s, "
                 f"BLEU: {get_moses_multi_bleu(curr_hyp, curr_ref, lowercase=False):.10f}")
-
+            
             start = time.time()
 
             curr_tokens = 0
@@ -139,18 +137,18 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                 eval_acc = 100 * eval_correct / eval_tokens
                 eval_bleu = get_moses_multi_bleu(eval_hyp, eval_ref, lowercase=False)
 
-                pbar.write(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
+                logger.info(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
                            f"Ppl: {eval_ppl:>10.2f}, "
                            f"Accuracy: {eval_acc:.2f}%, "
                            f"BLEU: {eval_bleu:.2f} {'↑' if eval_bleu > prev_eval_score else '↓'}")
-                pbar.refresh()
+                
                 if early_stop > 0:
 
                     if eval_bleu <= prev_eval_score:
                         # prev_eval_score = eval_bleu
                         plateau += 1
                         if plateau == early_stop:
-                            pbar.write(f'Early stopping after {curr_step} steps')
+                            logger.debug(f'Early stopping after {curr_step} steps')
                     else:
                         prev_eval_score = eval_bleu
                         plateau = 0
