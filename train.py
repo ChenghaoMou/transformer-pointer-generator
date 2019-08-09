@@ -65,7 +65,7 @@ def run_epoch(data_iter, model, loss_compute, pad):
 
 
 def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000,
-         eval_step=1000, report_step=50, pad=0, early_stop=6, curr_step=0):
+         eval_step=1000, report_step=50, pad=0, early_stop=10, curr_step=0):
     start = time.time()
 
     curr_hyp = []
@@ -143,7 +143,7 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                            f"Ppl: {eval_ppl:>10.2f}, "
                            f"Accuracy: {eval_acc:.2f}%, "
                            f"BLEU: {eval_bleu:.2f} {'↑' if eval_bleu > prev_eval_score else '↓'}")
-
+                pbar.refresh()
                 if early_stop > 0:
 
                     if eval_bleu <= prev_eval_score:
