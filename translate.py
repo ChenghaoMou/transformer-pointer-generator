@@ -15,13 +15,11 @@ def run_epoch(data_iter, model, field, device):
         batch.src_mask = (batch.src == field.vocab.stoi['<pad>']).to(batch.src.device)
         mem = model.encode(batch.src, src_mask=None, src_key_padding_mask=batch.src_mask)
         mem = mem.transpose(0, 1)
-        result.extend(beam_decode(model, mem, field, device, beam=5))
+        result.extend(beam_decode(model, batch.src, mem, field, device, beam=5))
 
-        
         logger.info('>>' + ''.join(field.vocab.itos[x] for x in batch.src[:, -1] if x > 3).replace('▁', ' '))
         logger.info('>>' + ''.join(field.vocab.itos[x] for x in batch.trg[:, -1] if x > 3).replace('▁', ' '))
         logger.info('>>' + ''.join(field.vocab.itos[x] for x in result[-1][0] if x > 3).replace('▁', ' '))
-        
 
     return result
 
@@ -34,6 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--prefix', type=str, required=True, help='Input prefix')
     parser.add_argument('--ext', nargs=2, help='Extension')
     parser.add_argument('--log', type=str, default='trans.log', help='Logging file')
+    parser.add_argument('--model_type', required=True, type=str, help='Model type: base, base-pg, xl, xl-pg')
 
     args = parser.parse_args()
 
@@ -49,7 +48,7 @@ if __name__ == '__main__':
     pad_index = field.vocab.stoi['<pad>']
 
     model = ParallelTransformer(
-        module=Transformer(vocab_size).to(device),
+        module=Transformer(vocab_size, model_type=args.model_type).to(device),
         device_ids=device_ids,
         output_device=device,
         dim=1
