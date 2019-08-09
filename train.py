@@ -65,7 +65,7 @@ def run_epoch(data_iter, model, loss_compute, pad):
 
 
 def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000,
-         eval_step=1000, report_step=50, pad=0, early_stop=10, curr_step=0):
+         eval_step=1000, report_step=50, pad=0, early_stop=10, curr_step=0, model_prefix="data/tfm"):
     start = time.time()
 
     curr_hyp = []
@@ -100,13 +100,13 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
 
         if curr_step % report_step == 0:
             elapsed = time.time() - start
-            
+
             logger.info(
                 f"Step: {curr_step:>7}, Size: {curr_tokens // 50:>7}/B, Loss: {curr_loss / curr_tokens:>10.2f}, "
                 f"Ppl: {math.exp(curr_loss / curr_tokens) if curr_loss / curr_tokens < 300 else float('inf'):>10.2f}, "
                 f"Accuracy: {100 * curr_correct / curr_tokens:.2f}%, Speed: {curr_tokens // elapsed:>7}/s, "
                 f"BLEU: {get_moses_multi_bleu(curr_hyp, curr_ref, lowercase=False):.10f}")
-            
+
             start = time.time()
 
             curr_tokens = 0
@@ -120,14 +120,13 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
             if len(checkpoints) == 10:
                 os.remove(checkpoints.popleft())
 
-            torch.save({
+            torch.save(
                 model.state_dict(),
-            },
-                f'data/tfm-{curr_step}.pt',
+                f'{model_prefix}-{curr_step}.pt',
                 pickle_module=dill
             )
 
-            checkpoints.append(f'data/tfm-{curr_step}.pt')
+            checkpoints.append(f'{model_prefix}-{curr_step}.pt')
 
             with torch.no_grad():
                 model.eval()
@@ -138,10 +137,10 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                 eval_bleu = get_moses_multi_bleu(eval_hyp, eval_ref, lowercase=False)
 
                 logger.info(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
-                           f"Ppl: {eval_ppl:>10.2f}, "
-                           f"Accuracy: {eval_acc:.2f}%, "
-                           f"BLEU: {eval_bleu:.2f} {'↑' if eval_bleu > prev_eval_score else '↓'}")
-                
+                            f"Ppl: {eval_ppl:>10.2f}, "
+                            f"Accuracy: {eval_acc:.2f}%, "
+                            f"BLEU: {eval_bleu:.2f} {'↑' if eval_bleu > prev_eval_score else '↓'}")
+
                 if early_stop > 0:
 
                     if eval_bleu <= prev_eval_score:
@@ -178,6 +177,7 @@ if __name__ == '__main__':
                         help='Validation step')
     parser.add_argument('--batch_size', type=int, default=2048,
                         help='Batch size in number of tokens')
+    parser.add_argument('--model_prefix', type=str, default='data/tfm', help='Model prefix')
     parser.add_argument('--resume', '-r', type=str,
                         help='Resume training from checkpoint')
     parser.add_argument('--log', type=str, required=False, default='train.log', help='Logging file')
@@ -221,7 +221,7 @@ if __name__ == '__main__':
     if not hasattr(field, 'vocab'):
         field.build_vocab(train, max_size=args.vocab_size)
     torch.save(
-        field, 
+        field,
         'data/field.pt',
         pickle_module=dill
     )
