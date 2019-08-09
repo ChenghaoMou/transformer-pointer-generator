@@ -426,14 +426,14 @@ class CopyGenerator(Module):
         Generate final vocab distribution.
 
         :param src_full: [S, B]
-        :param decode_attn: [B, T, S]
+        :param decode_attn: [B, nheads, T, S]
         :param decode_output: [T, B, H]
         :param memory: [S, B, H]
         :return:
         """
-
+        decode_attn = torch.sum(decode_attn, dim=1)  # [B, T, S]
         assert decode_attn.size(0) == decode_output.size(1)
-        assert decode_output.size(0) == memory.size(1)
+        assert decode_output.size(1) == memory.size(1)
         batch_size, steps, seq = decode_attn.size()
 
         src_full = src_full.transpose(0, 1).unsqueeze(0).repeat([steps, 1, 1])          # [T, B, S]
