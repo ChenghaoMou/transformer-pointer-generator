@@ -56,7 +56,7 @@ def beam_decode(model, src, memory, field, device, beam=5):
                 else:
                     continue
 
-            decoder_output = model.decode(src, decoder_input, memory[:, idx:idx+1])    # [T, 1, V]
+            decoder_output = model.decode(src[:, idx:idx+1], decoder_input, memory[:, idx:idx+1])    # [T, 1, V]
 
             log_prob, indexes = torch.topk(decoder_output, beam_width)
             next_nodes = []
