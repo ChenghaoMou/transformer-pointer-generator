@@ -32,7 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', '-m', type=str, required=True, help='Model file')
     parser.add_argument('--field', '-f', type=str, required=True, help='Field file')
     parser.add_argument('--prefix', type=str, required=True, help='Input prefix')
-    parser.add_argument('--exts', nargs=2, help='Extension')
+    parser.add_argument('--ext', nargs=2, help='Extension')
 
     args = parser.parse_args()
 
@@ -58,7 +58,7 @@ if __name__ == '__main__':
 
     test = datasets.TranslationDataset(
         path=args.prefix,
-        exts=args.exts,
+        exts=args.ext,
         fields=(('src', field), ('trg', field))
     )
 
