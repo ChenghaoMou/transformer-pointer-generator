@@ -123,8 +123,7 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                 os.remove(checkpoints.popleft())
 
             torch.save({
-                'model': model.state_dict(),
-                'field': field,
+                model.state_dict(),
             },
                 f'data/tfm-{curr_step}.pt',
                 pickle_module=dill
@@ -221,7 +220,11 @@ if __name__ == '__main__':
 
     if not hasattr(field, 'vocab'):
         field.build_vocab(train, max_size=args.vocab_size)
-
+    torch.save(
+        field, 
+        'data/field.pt',
+        pickle_module=dill
+    )
     vocab_size = len(field.vocab.stoi)
     pad_index = field.vocab.stoi['<pad>']
 

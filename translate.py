@@ -1,6 +1,6 @@
 import torch
 import os
-
+import argparse
 from tqdm import tqdm
 from transformer.beam import beam_decode
 from transformer.model import Transformer, ParallelTransformer
@@ -28,13 +28,21 @@ def run_epoch(data_iter, model, field, device):
 
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser('Translate')
+    parser.add_argument('--model', '-m', type=str, required=True, help='Model file')
+    parser.add_argument('--field', '-f', type=str, required=True, help='Field file')
+    parser.add_argument('--prefix', type=str, required=True, help='Input prefix')
+    parser.add_argument('--exts', nargs=2, help='Extension')
+
+    args = parser.parse_args()
+
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     device_ids = [f'cuda:{i}' for i in reversed(range(torch.cuda.device_count()))]
 
     os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, range(torch.cuda.device_count())))
 
-    resource = torch.load('data/tfm-20000.pt', map_location=device)
-    model_dict, field = resource['model'], resource['field']
+    model_dict = torch.load(args.model, map_location=device)
+    field = torch.load(args.field)
 
     vocab_size = len(field.vocab.stoi)
     pad_index = field.vocab.stoi['<pad>']
@@ -49,8 +57,8 @@ if __name__ == '__main__':
     model.load_state_dict(model_dict)
 
     test = datasets.TranslationDataset(
-        path='data/elisa.test-bpe',
-        exts=('.tgl', '.en'),
+        path=args.prefix,
+        exts=args.exts,
         fields=(('src', field), ('trg', field))
     )
 
