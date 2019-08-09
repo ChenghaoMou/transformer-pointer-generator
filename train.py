@@ -259,4 +259,4 @@ if __name__ == '__main__':
     if curr_step > 0:
         logger.info(f'Resuming from {curr_step} steps')
     main(train_iter, eval_iter, model, train_loss, eval_loss, field,
-         steps=args.steps, eval_step=args.valid_step, report_step=50, pad=pad_index, curr_step=curr_step+1)
+         steps=args.steps, eval_step=args.valid_step, report_step=50, pad=pad_index, curr_step=curr_step+1, model_prefix=args.model_prefix)
