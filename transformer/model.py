@@ -256,7 +256,7 @@ class TransformerDecoder(Module):
                                           memory_mask=memory_mask,
                                           tgt_key_padding_mask=tgt_key_padding_mask,
                                           memory_key_padding_mask=memory_key_padding_mask)
-
+            attns.append(attn)
         if self.norm:
             output = self.norm(output)
 
