@@ -53,7 +53,7 @@ class Transformer(Module):
 
     def __init__(self, vocab_size, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
-                 custom_encoder=None, custom_decoder=None):
+                 custom_encoder=None, custom_decoder=None, model_type='base'):
         super(Transformer, self).__init__()
 
         self.src_embed = TransformerEmbedding(vocab_size, d_model, dropout)
@@ -73,7 +73,10 @@ class Transformer(Module):
             decoder_norm = LayerNorm(d_model)
             self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm)
 
-        self.generator = Generator(vocab_size, d_model)
+        if model_type == "base":
+            self.generator = Generator(vocab_size, d_model)
+        elif model_type == "base-pg":
+            self.generator = CopyGenerator(vocab_size, d_model)
 
         self._reset_parameters()
 

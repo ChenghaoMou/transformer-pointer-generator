@@ -161,6 +161,7 @@ if __name__ == '__main__':
                         help='Training file prefix')
     parser.add_argument('--train_ext', required=True, nargs=2, type=str,
                         help='Training file extensions')
+    parser.add_argument('--model_type', required=True, type=str, help='Model type: base, base-pg, xl, xl-pg')
     parser.add_argument('--vocab_size', '-v', required=True, type=int,
                         help='Maximum vocab size')
     parser.add_argument('--dropout', default=0.2, type=float,
@@ -211,7 +212,7 @@ if __name__ == '__main__':
     Minimum source length: {}
     Maximum source length: {}
     99.9% percentile length: {}
-    
+
     Average target length: {:.2f}
     Minimum target length: {}
     Maximum target length: {}
@@ -229,7 +230,7 @@ if __name__ == '__main__':
     pad_index = field.vocab.stoi['<pad>']
 
     model = ParallelTransformer(
-        module=Transformer(vocab_size, dropout=args.dropout).to(device),
+        module=Transformer(vocab_size, dropout=args.dropout, model_type=args.model_type).to(device),
         device_ids=device_ids,
         output_device=device,
         dim=1
