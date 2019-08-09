@@ -459,7 +459,7 @@ class Generator(Module):
         :return:
         """
 
-        gen_logits = torch.log_softmax(self.gen_proj(decode_output))                 # [T, B, V]
+        gen_logits = torch.log_softmax(self.gen_proj(decode_output), dim=-1)                 # [T, B, V]
         return gen_logits
 
 
