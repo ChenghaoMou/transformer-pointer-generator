@@ -180,8 +180,10 @@ if __name__ == '__main__':
                         help='Batch size in number of tokens')
     parser.add_argument('--resume', '-r', type=str,
                         help='Resume training from checkpoint')
+    parser.add_argument('--log', type=str, required=False, default='train.log', help='Logging file')
 
     args = parser.parse_args()
+    logger.add(args.log)
 
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     device_ids = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
@@ -204,7 +206,7 @@ if __name__ == '__main__':
     dev = datasets.TranslationDataset(path=args.valid_prefix, exts=args.valid_ext,
                                       fields=list(zip(['src', 'trg'], [field, field])))
 
-    print("""
+    logger.info("""
     Average source length: {:.2f}
     Minimum source length: {}
     Maximum source length: {}
@@ -254,6 +256,6 @@ if __name__ == '__main__':
                                     train=False)
     curr_step = 0 if args.resume is None else int(re.findall('[0-9]+', args.resume)[0])
     if curr_step > 0:
-        print(f'Resuming from {curr_step} steps')
+        logger.info(f'Resuming from {curr_step} steps')
     main(train_iter, eval_iter, model, train_loss, eval_loss, field,
          steps=args.steps, eval_step=args.valid_step, report_step=50, pad=pad_index, curr_step=curr_step+1)
