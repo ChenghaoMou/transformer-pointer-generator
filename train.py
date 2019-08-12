@@ -100,12 +100,12 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
 
         if curr_step % report_step == 0:
             elapsed = time.time() - start
-
+            bleu_score = get_moses_multi_bleu(curr_hyp, curr_ref, lowercase=False)
             logger.info(
                 f"Step: {curr_step:>7}, Size: {curr_tokens // 50:>7}/B, Loss: {curr_loss / curr_tokens:>10.2f}, "
                 f"Ppl: {math.exp(curr_loss / curr_tokens) if curr_loss / curr_tokens < 300 else float('inf'):>10.2f}, "
                 f"Accuracy: {100 * curr_correct / curr_tokens:.2f}%, Speed: {curr_tokens // elapsed:>7}/s, "
-                f"BLEU: {get_moses_multi_bleu(curr_hyp, curr_ref, lowercase=False):.10f}")
+                f"BLEU: {bleu_score if bleu_score is not None else 0:.10f}")
 
             start = time.time()
 
@@ -139,7 +139,7 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                 logger.info(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
                             f"Ppl: {eval_ppl:>10.2f}, "
                             f"Accuracy: {eval_acc:.2f}%, "
-                            f"BLEU: {eval_bleu:.2f} {'↑' if eval_bleu > prev_eval_score else '↓'}")
+                            f"BLEU: {eval_bleu if eval_bleu is not None else 0:.2f} {'↑' if eval_bleu is not None and eval_bleu > prev_eval_score else '↓'}")
 
                 if early_stop > 0:
 
@@ -192,7 +192,7 @@ if __name__ == '__main__':
 
     if args.resume:
         resource = torch.load(args.resume, map_location=device)
-        model_dict = resource['model']
+        model_dict = resource
 
     else:
         model_dict = None
