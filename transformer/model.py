@@ -1,7 +1,7 @@
 # coding: utf-8
 # Source: https://raw.githubusercontent.com/pytorch/pytorch/master/torch/nn/modules/transformer.py
 import math
-
+import numpy as np
 import torch
 import copy
 
@@ -413,13 +413,65 @@ class PositionalEncoding(Module):
         return self.dropout(x)
 
 
+class SpanPositionalEncoding():
+
+    def __init__(self, itos, padding_idx):
+        self.itos = itos
+        self.padding_idx = padding_idx
+
+    def __call__(self, x):
+        # print(x.shape)
+        seq_len, batch_size = x.shape
+        pos_enc = torch.zeros_like(x)
+
+        for b in range(batch_size):
+            for i in range(seq_len):
+                if '▁' in self.itos[x[i, b].item()] or i == 0:
+                    pos_enc[i, b] = 4
+                else:
+                    if i > 0 and x[i, b].item() != self.padding_idx:
+                        pos_enc[i, b] = 1 + pos_enc[i-1, b]
+                    else:
+                        pos_enc[i, b] = x[i, b]
+        return pos_enc
+
+    @staticmethod
+    def decay(pos, prev, curr, decay_rate=0.1):
+        """Copy rate decaying for current step.
+
+        Arguments:
+            pos {[type]} -- [S, B]
+            prev {[type]} -- copy rate for last step, [T-1, B, S]
+            curr {[type]} -- copy rate for current step,  [T, B, S]
+
+        Keyword Arguments:
+            decay_rate {float} -- [description] (default: {0.1})
+
+        Returns:
+            [type] -- new copy rate for current step, [T, B, S]
+        """
+        steps = curr.size(0)
+        residual = torch.zeros_like(curr)  # [T, B, S]
+        mask = torch.zeros_like(curr)  # [T, B, S]
+
+        residual[1:, ..., 1:] += prev[..., :-1] * decay_rate  # [T, B, S]
+        # Only if the current step is within the same span of the last step.
+        flag = (pos[1:] > pos[:-1]).float()  # [S-1, B]
+        mask[-1:, ..., 1:] += flag.transpose(0, 1).unsqueeze(0).repeat([1, 1, 1])
+        new = residual + (1 - decay_rate) * curr
+        ans = torch.where(mask.bool(), new, curr)
+        return torch.softmax(ans, dim=-1)
+
+
 class CopyGenerator(Module):
 
-    def __init__(self, vocab_size, d_model):
+    def __init__(self, vocab_size, d_model, field=None):
         super(CopyGenerator, self).__init__()
         self.vocab_size = vocab_size
         self.gen_proj = Linear(d_model, vocab_size)
         self.prob_proj = Linear(d_model, 1)
+        self.field = field
+        self.pos_encoder = SpanPositionalEncoding(self.field.vocab.itos, padding_idx=self.field.vocab['<pad>'])
 
     def forward(self, src_full, decode_output, decode_attn, memory):
         """
@@ -443,7 +495,14 @@ class CopyGenerator(Module):
         gen_logits = prob * torch.softmax(self.gen_proj(decode_output), dim=-1)                 # [T, B, V]
         copy_logits = torch.zeros_like(gen_logits)                                      # [T, B, V]
         copy_logits = copy_logits.scatter_add(2, src_full, decode_attn.transpose(0, 1))  # [T, B, V]
-        copy_logits = (1 - prob) * torch.softmax(copy_logits, dim=-1)                           # [T, B, V]
+        copy_logits = torch.softmax(copy_logits, dim=-1)                           # [T, B, V]
+
+        pos = self.pos_encoder(src_full)
+
+        for step in range(1, copy_logits.size(0)):
+            copy_logits = pos_encoder.decay(pos, copy_logits[:step], curr[:step+1])
+
+        copy_logits = (1 - prob) * copy_logits
 
         return torch.log(gen_logits + copy_logits)
 
@@ -468,3 +527,39 @@ class Generator(Module):
 
 def _get_clones(module, N):
     return ModuleList([copy.deepcopy(module) for i in range(N)])
+
+
+if __name__ == "__main__":
+
+    itos = {
+        0: '<unk>',
+        1: '<pad>',
+        2: '<bos>',
+        3: '<eos>',
+        4: '▁he',
+        5: 'llo',
+        6: '▁',
+        7: 'world',
+        8: '!'
+    }
+
+    pos_encoder = SpanPositionalEncoding(itos, padding_idx=1)
+    t = np.random.randint(0, 9, 2).reshape(2, 1)  # [S, B]
+    d = [[itos[e] for e in x] for x in t.T]  # [B, S]
+    pos = pos_encoder(torch.from_numpy(t))  # [S, B]
+    # for text, ids in zip(d, pos.T):
+    # print(text)
+    # print(ids)
+    print(pos.transpose(0, 1))
+    prev = torch.softmax(torch.rand(2).reshape(1, 1, 2), dim=-1)
+    curr = torch.softmax(torch.rand(4).reshape(2, 1, 2), dim=-1)
+
+    print(prev)
+    print(curr)
+
+    new = pos_encoder.decay(pos, prev, curr)
+
+    # print(pos)
+
+    print(new)
+    # print(torch.softmax(new, dim=-1))
