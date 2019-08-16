@@ -51,7 +51,7 @@ class Transformer(Module):
         >>> transformer_model = nn.Transformer(src_vocab, tgt_vocab, nhead=16, num_encoder_layers=12)
     """
 
-    def __init__(self, vocab_size, d_model=512, nhead=8, num_encoder_layers=6,
+    def __init__(self, vocab_size, field, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  custom_encoder=None, custom_decoder=None, model_type='base'):
         super(Transformer, self).__init__()
@@ -76,7 +76,7 @@ class Transformer(Module):
         if model_type == "base":
             self.generator = Generator(vocab_size, d_model)
         elif model_type == "base-pg":
-            self.generator = CopyGenerator(vocab_size, d_model)
+            self.generator = CopyGenerator(vocab_size, d_model, field.vocab.itos, field.vocab.stoi['<pad>'])
 
         self._reset_parameters()
 
@@ -465,13 +465,13 @@ class SpanPositionalEncoding():
 
 class CopyGenerator(Module):
 
-    def __init__(self, vocab_size, d_model, field=None):
+    def __init__(self, vocab_size, d_model, itos, padding_idx):
         super(CopyGenerator, self).__init__()
         self.vocab_size = vocab_size
         self.gen_proj = Linear(d_model, vocab_size)
         self.prob_proj = Linear(d_model, 1)
-        self.field = field
-        self.pos_encoder = SpanPositionalEncoding(self.field.vocab.itos, padding_idx=self.field.vocab['<pad>'])
+
+        self.pos_encoder = SpanPositionalEncoding(itos, padding_idx=padding_idx)
 
     def forward(self, src_full, decode_output, decode_attn, memory):
         """

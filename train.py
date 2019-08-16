@@ -136,10 +136,11 @@ def main(train_iter, eval_iter, model, train_loss, dev_loss, field, steps=200000
                 eval_acc = 100 * eval_correct / eval_tokens
                 eval_bleu = get_moses_multi_bleu(eval_hyp, eval_ref, lowercase=False)
 
-                logger.info(f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
-                            f"Ppl: {eval_ppl:>10.2f}, "
-                            f"Accuracy: {eval_acc:.2f}%, "
-                            f"BLEU: {eval_bleu if eval_bleu is not None else 0:.2f} {'↑' if eval_bleu is not None and eval_bleu > prev_eval_score else '↓'}")
+                logger.info(
+                    f"Eval Loss: {eval_loss / eval_tokens:>10.2f}, "
+                    f"Ppl: {eval_ppl:>10.2f}, "
+                    f"Accuracy: {eval_acc:.2f}%, "
+                    f"BLEU: {eval_bleu if eval_bleu is not None else 0:.2f} {'↑' if eval_bleu is not None and eval_bleu > prev_eval_score else '↓'}")
 
                 if early_stop > 0:
 
@@ -230,7 +231,7 @@ if __name__ == '__main__':
     pad_index = field.vocab.stoi['<pad>']
 
     model = ParallelTransformer(
-        module=Transformer(vocab_size, dropout=args.dropout, model_type=args.model_type).to(device),
+        module=Transformer(vocab_size, field, dropout=args.dropout, model_type=args.model_type).to(device),
         device_ids=device_ids,
         output_device=device,
         dim=1
