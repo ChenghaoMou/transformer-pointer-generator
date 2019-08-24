@@ -2,8 +2,12 @@ import os
 import torch
 import pytorch_lightning as pl
 import copy
+import math
+from torch.autograd import Variable
 from torch.nn import NLLLoss
-from torchtext import data, dataset
+from torchtext import data, datasets
+from torch.nn import Embedding
+from torch.nn import LogSoftmax
 from torch.nn import functional as F
 from torch.nn.modules.module import Module
 from torch.nn.modules.activation import MultiheadAttention
@@ -13,6 +17,7 @@ from torch.nn.modules.dropout import Dropout
 from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
 from torch.optim import Adam
+from torchnlp.metrics import get_moses_multi_bleu, get_accuracy, get_token_accuracy
 
 
 class Transformer(pl.LightningModule):
@@ -37,9 +42,9 @@ class Transformer(pl.LightningModule):
         >>> transformer_model = nn.Transformer(src_vocab, tgt_vocab, nhead=16, num_encoder_layers=12)
     """
 
-    def __init__(self, vocab_size, d_model=512, nhead=8, num_encoder_layers=6,
+    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
-                 custom_encoder=None, custom_decoder=None, loss=None, padding_index=0):
+                 custom_encoder=None, custom_decoder=None):
         super(Transformer, self).__init__()
 
         if custom_encoder is not None:
@@ -56,14 +61,20 @@ class Transformer(pl.LightningModule):
             decoder_norm = LayerNorm(d_model)
             self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm)
 
-        self.generator = CopyGenerator(d_model, vocab_size)
+        self.generator = None
         self._reset_parameters()
 
         self.d_model = d_model
-        self.vocab_size = vocab_size
+        self.vocab_size = None
         self.nhead = nhead
 
-        self.loss = loss if loss is not None else NLLLoss(ignore_index=padding_idx, reduction='mean')
+        self.field = data.Field(init_token='<bos>', eos_token='<eos>')
+        self.padding_idx = None
+        self.loss = None
+
+        self.src_embed = None
+        self.tgt_embed = None
+        self.dropout = dropout
 
     def forward(self, src, tgt, src_mask=None, tgt_mask=None,
                 memory_mask=None, src_key_padding_mask=None,
@@ -115,6 +126,9 @@ class Transformer(pl.LightningModule):
         if src.size(1) != tgt.size(1):
             raise RuntimeError("the batch number of src and tgt must be equal")
 
+        src = self.src_embed(src)
+        tgt = self.tgt_embed(tgt)
+
         if src.size(2) != self.d_model or tgt.size(2) != self.d_model:
             raise RuntimeError("the feature number of src and tgt must be equal to d_model")
 
@@ -142,17 +156,23 @@ class Transformer(pl.LightningModule):
 
     def training_step(self, batch, batch_nb):
         # REQUIRED
-        logits = self.forward(batch.src, batch.tgt, src_mask=batch.src_mask, tgt_mask=batch.tgt_mask,
+        # TODO, generating masks for each batch
+        batch = self.fullfil(batch)
+        logits = self.forward(batch.src, batch.tgt[:-1], src_mask=batch.src_mask, tgt_mask=batch.tgt_mask,
                               memory_mask=batch.memory_mask, src_key_padding_mask=batch.src_key_padding_mask,
                               tgt_key_padding_mask=batch.tgt_key_padding_mask, memory_key_padding_mask=batch.memory_key_padding_mask)
 
-        return {'loss': self.loss(logits, batch.tgt)}
+        return {'loss': self.loss(logits.reshape(-1, logits.size(-1)), batch.tgt[1:].reshape(-1))}
 
     def validation_step(self, batch, batch_nb):
         # OPTIONAL
-        x, y = batch
-        y_hat = self.forward(x)
-        return {'val_loss': F.cross_entropy(y_hat, y)}
+        batch = self.fullfil(batch)
+        with torch.no_grad():
+            logits = self.forward(batch.src, batch.tgt[:-1], src_mask=batch.src_mask, tgt_mask=batch.tgt_mask,
+                                  memory_mask=batch.memory_mask, src_key_padding_mask=batch.src_key_padding_mask,
+                                  tgt_key_padding_mask=batch.tgt_key_padding_mask, memory_key_padding_mask=batch.memory_key_padding_mask)
+        # print(logits.shape)
+        return {'val_loss': self.loss(logits.reshape(-1, logits.size(-1)), batch.tgt[1:].reshape(-1))}
 
     def validation_end(self, outputs):
         # OPTIONAL
@@ -162,22 +182,74 @@ class Transformer(pl.LightningModule):
     def configure_optimizers(self):
         # REQUIRED
         # can return multiple optimizers and learning_rate schedulers
-        return NoamOptimizer(self.parameters(), self.d_model)
+        return [NoamOptimizer(self.parameters(), self.d_model)]
 
     @pl.data_loader
     def tng_dataloader(self):
         # REQUIRED
-        return DataLoader(MNIST(os.getcwd(), train=True, download=True, transform=transforms.ToTensor()), batch_size=32)
+
+        mt_train = datasets.TranslationDataset(
+            path='/Users/chenghaomou/Code/Code-ProjectsPyCharm/transformer-pointer-generator/data/train', exts=('.src', '.tgt'),
+            fields=(('src', self.field), ('tgt', self.field)))
+
+        if self.vocab_size is None:
+            self.field.build_vocab(mt_train, max_size=8000)
+            self.vocab_size = len(self.field.vocab.stoi)
+            # print(len(self.field.vocab.stoi))
+            self.generator = CopyGenerator(self.d_model, self.vocab_size)
+            self.padding_idx = self.field.vocab.stoi['<pad>']
+            self.loss = NLLLoss(ignore_index=self.padding_idx, reduction='mean')
+
+            self.src_embed = TransformerEmbedding(self.vocab_size, self.d_model, self.dropout)
+            self.tgt_embed = TransformerEmbedding(self.vocab_size, self.d_model, self.dropout)
+
+        train_iter = data.BucketIterator(
+            dataset=mt_train, batch_size=1024,
+            batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
+            sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
+
+        return [batch for batch in train_iter]
 
     @pl.data_loader
     def val_dataloader(self):
         # OPTIONAL
-        return DataLoader(MNIST(os.getcwd(), train=True, download=True, transform=transforms.ToTensor()), batch_size=32)
+        mt_dev = datasets.TranslationDataset(
+            path='data/dev', exts=('.src', '.tgt'),
+            fields=(('src', self.field), ('tgt', self.field)))
+
+        dev_iter = data.BucketIterator(
+            dataset=mt_dev, batch_size=1024,
+            batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
+            sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
+
+        return [batch for batch in dev_iter]
 
     @pl.data_loader
     def test_dataloader(self):
         # OPTIONAL
-        return DataLoader(MNIST(os.getcwd(), train=True, download=True, transform=transforms.ToTensor()), batch_size=32)
+        mt_test = datasets.TranslationDataset(
+            path='data/test', exts=('.src', '.tgt'),
+            fields=(('src', self.field), ('tgt', self.field)))
+
+        test_iter = data.BucketIterator(
+            dataset=mt_test, batch_size=1024,
+            batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
+            sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
+
+        return [batch for batch in test_iter]
+
+    def fullfil(self, batch):
+        batch.src_mask = None
+        batch.tgt_mask = self.generate_square_subsequent_mask(batch.tgt[:-1].size(0))
+        batch.memory_mask = None
+        batch.src_key_padding_mask = (batch.src == self.padding_idx).transpose(0, 1)
+        batch.tgt_key_padding_mask = (batch.tgt[:-1] == self.padding_idx).transpose(0, 1)
+        batch.memory_key_padding_mask = None
+
+        # print(batch.src.shape, batch.src_key_padding_mask.shape)
+        # print(batch.tgt.shape, batch.tgt_key_padding_mask.shape)
+
+        return batch
 
 
 class TransformerEncoder(Module):
@@ -395,6 +467,7 @@ def _get_clones(module, N):
 class CopyGenerator(Module):
 
     def __init__(self, d_model, vocab_size):
+        super(CopyGenerator, self).__init__()
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.generation = Linear(d_model, vocab_size, bias=False)
@@ -426,3 +499,35 @@ class NoamOptimizer(Adam):
 
     def lrate(self):
         return self.factor * self.d_model ** (-0.5) * min(self.step_num ** (-0.5), self.step_num * self.warmup_steps ** (-1.5))
+
+
+class TransformerEmbedding(Module):
+
+    def __init__(self, vocab_size, d_model, dropout=0.1):
+        super(TransformerEmbedding, self).__init__()
+        self.embed = Embedding(vocab_size, d_model)
+        self.d_model = d_model
+        self.pos = PositionalEncoding(d_model, dropout)
+
+    def forward(self, x):
+        return self.pos(self.embed(x))
+
+
+class PositionalEncoding(Module):
+
+    def __init__(self, d_model, dropout, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0., max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0., d_model, 2) * -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(1)
+        self.register_buffer('pe', pe)
+
+    # noinspection PyArgumentList
+    def forward(self, x):
+        x = x + Variable(self.pe[:x.size(0)], requires_grad=False)
+        return self.dropout(x)

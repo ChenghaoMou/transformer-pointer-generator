@@ -1,7 +1,6 @@
 temp*
-.idea/*
-.vscode/*
+.idea
+.vscode
 __pycache__
 .DS_Store
-data/*.pt
-.vscode
+output
