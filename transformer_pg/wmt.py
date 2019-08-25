@@ -3,13 +3,14 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split
 from loguru import logger
 import argparse
+from utils.sentencepiece import BPELearner
 
 
 def split(path, test_size=0.1, random_state=42, shuffle=True):
     p = Path(path)
     corpus = None
     with p.open() as f:
-        corpus = f.readlines()
+        corpus = list(map(lambda l: l.strip('\r\n '), f.readlines()))
 
     train, dev = train_test_split(corpus, test_size=test_size, random_state=random_state, shuffle=shuffle)
     dev, test = train_test_split(dev, test_size=0.5, random_state=random_state, shuffle=shuffle)
@@ -21,6 +22,16 @@ def split(path, test_size=0.1, random_state=42, shuffle=True):
         with src_path.open(mode='w') as src_file, tgt_path.open(mode='w') as tgt_file:
             src_file.write('\n'.join(src))
             tgt_file.write('\n'.join(tgt))
+
+        if name == "train":
+            bpe = BPELearner()
+            bpe.ingest(src_path)
+            bpe.ingest(tgt_path)
+
+            bpe.save('./data/bpe')
+
+        bpe.digest(src_path, p.parent / f"{name}.bpe.src")
+        bpe.digest(tgt_path, p.parent / f"{name}.bpe.tgt")
 
     logger.debug(f'Datasets generated. train: {len(train)} dev: {len(dev)} test: {len(test)}')
 

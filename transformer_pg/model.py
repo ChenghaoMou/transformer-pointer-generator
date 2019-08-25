@@ -3,6 +3,7 @@ import torch
 import pytorch_lightning as pl
 import copy
 import math
+import numpy as np
 from torch.autograd import Variable
 from torch.nn import NLLLoss
 from torchtext import data, datasets
@@ -18,6 +19,42 @@ from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
 from torch.optim import Adam
 from torchnlp.metrics import get_moses_multi_bleu, get_accuracy, get_token_accuracy
+
+
+class BatchIterator:
+
+    def __init__(self, iterator, padding_idx):
+        self.data = [batch for batch in iterator]
+        self.count = 0
+        self.padding_idx = padding_idx
+
+    def __len__(self):
+        return len(self.data)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.count < len(self):
+            batch = self.data[self.count]
+            batch.src_mask = None
+            batch.tgt_mask = self.generate_square_subsequent_mask(batch.tgt[:-1].size(0))
+            batch.memory_mask = None
+            batch.src_key_padding_mask = (batch.src == self.padding_idx).transpose(0, 1)
+            batch.tgt_key_padding_mask = (batch.tgt[:-1] == self.padding_idx).transpose(0, 1)
+            batch.memory_key_padding_mask = None
+
+            return batch
+        else:
+            raise StopIteration
+
+    def generate_square_subsequent_mask(self, sz):
+        """Generate a square mask for the sequence. The masked positions are filled with float('-inf').
+            Unmasked positions are filled with float(0.0).
+        """
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
 
 
 class Transformer(pl.LightningModule):
@@ -61,14 +98,13 @@ class Transformer(pl.LightningModule):
             decoder_norm = LayerNorm(d_model)
             self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm)
 
-        self.generator = None
-        self._reset_parameters()
-
         self.d_model = d_model
-        self.vocab_size = None
         self.nhead = nhead
 
         self.field = data.Field(init_token='<bos>', eos_token='<eos>')
+
+        self.vocab_size = None
+        self.vocab_size = None
         self.padding_idx = None
         self.loss = None
 
@@ -139,14 +175,6 @@ class Transformer(pl.LightningModule):
         # return output, attn_weights
         return self.generator(output)
 
-    def generate_square_subsequent_mask(self, sz):
-        r"""Generate a square mask for the sequence. The masked positions are filled with float('-inf').
-            Unmasked positions are filled with float(0.0).
-        """
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-
     def _reset_parameters(self):
         r"""Initiate parameters in the transformer model."""
 
@@ -156,13 +184,23 @@ class Transformer(pl.LightningModule):
 
     def training_step(self, batch, batch_nb):
         # REQUIRED
-        # TODO, generating masks for each batch
+
         batch = self.fullfil(batch)
         logits = self.forward(batch.src, batch.tgt[:-1], src_mask=batch.src_mask, tgt_mask=batch.tgt_mask,
                               memory_mask=batch.memory_mask, src_key_padding_mask=batch.src_key_padding_mask,
                               tgt_key_padding_mask=batch.tgt_key_padding_mask, memory_key_padding_mask=batch.memory_key_padding_mask)
 
-        return {'loss': self.loss(logits.reshape(-1, logits.size(-1)), batch.tgt[1:].reshape(-1))}
+        ids = torch.argmax(logits, dim=-1)
+        translations = self.restore(ids)
+        references = self.restore(batch.tgt[1:])
+
+        bleu = get_moses_multi_bleu(translations, references)
+        accuracy = get_token_accuracy(batch.tgt[1:].reshape(-1), ids.reshape(-1), ignore_index=self.padding_idx)
+
+        return {'loss': self.loss(logits.reshape(-1, logits.size(-1)), batch.tgt[1:].reshape(-1)),
+                'bleu': bleu if bleu else 0.0,
+                'accuracy': accuracy
+                }
 
     def validation_step(self, batch, batch_nb):
         # OPTIONAL
@@ -172,12 +210,23 @@ class Transformer(pl.LightningModule):
                                   memory_mask=batch.memory_mask, src_key_padding_mask=batch.src_key_padding_mask,
                                   tgt_key_padding_mask=batch.tgt_key_padding_mask, memory_key_padding_mask=batch.memory_key_padding_mask)
         # print(logits.shape)
-        return {'val_loss': self.loss(logits.reshape(-1, logits.size(-1)), batch.tgt[1:].reshape(-1))}
+        ids = torch.argmax(logits, dim=-1)
+        translations = self.restore(ids)
+        references = self.restore(batch.tgt[1:])
+
+        bleu = get_moses_multi_bleu(translations, references)
+        accuracy = get_token_accuracy(batch.tgt[1:].reshape(-1), ids.reshape(-1), ignore_index=self.padding_idx)
+
+        return {'val_loss': self.loss(logits.reshape(-1, logits.size(-1)), batch.tgt[1:].reshape(-1)),
+                'bleu': bleu if bleu else 0.0,
+                'accuracy': accuracy}
 
     def validation_end(self, outputs):
         # OPTIONAL
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
-        return {'avg_val_loss': avg_loss}
+        avg_bleu = np.mean([x['bleu'] for x in outputs])
+        avg_acc = np.mean([x['accuracy'] for x in outputs])
+        return {'avg_val_loss': avg_loss, 'avg_bleu': avg_bleu, 'avg_acc': avg_acc}
 
     def configure_optimizers(self):
         # REQUIRED
@@ -193,9 +242,9 @@ class Transformer(pl.LightningModule):
             fields=(('src', self.field), ('tgt', self.field)))
 
         if self.vocab_size is None:
+
             self.field.build_vocab(mt_train, max_size=8000)
             self.vocab_size = len(self.field.vocab.stoi)
-            # print(len(self.field.vocab.stoi))
             self.generator = CopyGenerator(self.d_model, self.vocab_size)
             self.padding_idx = self.field.vocab.stoi['<pad>']
             self.loss = NLLLoss(ignore_index=self.padding_idx, reduction='mean')
@@ -203,15 +252,18 @@ class Transformer(pl.LightningModule):
             self.src_embed = TransformerEmbedding(self.vocab_size, self.d_model, self.dropout)
             self.tgt_embed = TransformerEmbedding(self.vocab_size, self.d_model, self.dropout)
 
+            self._reset_parameters()
+
         train_iter = data.BucketIterator(
             dataset=mt_train, batch_size=1024,
             batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
             sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
 
-        return [batch for batch in train_iter]
+        return BatchIterator(train_iter, self.padding_idx)
 
     @pl.data_loader
     def val_dataloader(self):
+
         # OPTIONAL
         mt_dev = datasets.TranslationDataset(
             path='data/dev', exts=('.src', '.tgt'),
@@ -222,7 +274,7 @@ class Transformer(pl.LightningModule):
             batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
             sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
 
-        return [batch for batch in dev_iter]
+        return BatchIterator(dev_iter, self.padding_idx)
 
     @pl.data_loader
     def test_dataloader(self):
@@ -236,20 +288,22 @@ class Transformer(pl.LightningModule):
             batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
             sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
 
-        return [batch for batch in test_iter]
+        return BatchIterator(test_iter, self.padding_idx)
 
     def fullfil(self, batch):
-        batch.src_mask = None
-        batch.tgt_mask = self.generate_square_subsequent_mask(batch.tgt[:-1].size(0))
-        batch.memory_mask = None
-        batch.src_key_padding_mask = (batch.src == self.padding_idx).transpose(0, 1)
-        batch.tgt_key_padding_mask = (batch.tgt[:-1] == self.padding_idx).transpose(0, 1)
-        batch.memory_key_padding_mask = None
 
         # print(batch.src.shape, batch.src_key_padding_mask.shape)
         # print(batch.tgt.shape, batch.tgt_key_padding_mask.shape)
 
         return batch
+
+    def restore(self, ids):
+        """
+        Inputs: 
+            ids: [T, B]
+        """
+
+        return [''.join(self.field.vocab.itos[i] for i in s).replace('_', ' ') for s in ids.transpose(0, 1)]
 
 
 class TransformerEncoder(Module):
@@ -529,5 +583,9 @@ class PositionalEncoding(Module):
 
     # noinspection PyArgumentList
     def forward(self, x):
+        """
+        Inputs: 
+            x: [S/T, B, H]
+        """
         x = x + Variable(self.pe[:x.size(0)], requires_grad=False)
         return self.dropout(x)
