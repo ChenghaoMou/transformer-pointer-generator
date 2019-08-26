@@ -23,10 +23,9 @@ from torchnlp.metrics import get_moses_multi_bleu, get_accuracy, get_token_accur
 
 class BatchIterator:
 
-    def __init__(self, iterator, padding_idx):
+    def __init__(self, iterator):
         self.data = [batch for batch in iterator]
         self.count = 0
-        self.padding_idx = padding_idx
 
     def __len__(self):
         return len(self.data)
@@ -37,24 +36,9 @@ class BatchIterator:
     def __next__(self):
         if self.count < len(self):
             batch = self.data[self.count]
-            batch.src_mask = None
-            batch.tgt_mask = self.generate_square_subsequent_mask(batch.tgt[:-1].size(0))
-            batch.memory_mask = None
-            batch.src_key_padding_mask = (batch.src == self.padding_idx).transpose(0, 1)
-            batch.tgt_key_padding_mask = (batch.tgt[:-1] == self.padding_idx).transpose(0, 1)
-            batch.memory_key_padding_mask = None
-
             return batch
         else:
             raise StopIteration
-
-    def generate_square_subsequent_mask(self, sz):
-        """Generate a square mask for the sequence. The masked positions are filled with float('-inf').
-            Unmasked positions are filled with float(0.0).
-        """
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
 
 
 class Transformer(pl.LightningModule):
@@ -79,7 +63,7 @@ class Transformer(pl.LightningModule):
         >>> transformer_model = nn.Transformer(src_vocab, tgt_vocab, nhead=16, num_encoder_layers=12)
     """
 
-    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+    def __init__(self, batch_size=1024, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  custom_encoder=None, custom_decoder=None):
         super(Transformer, self).__init__()
@@ -111,6 +95,7 @@ class Transformer(pl.LightningModule):
         self.src_embed = None
         self.tgt_embed = None
         self.dropout = dropout
+        self.batch_size = batch_size
 
     def forward(self, src, tgt, src_mask=None, tgt_mask=None,
                 memory_mask=None, src_key_padding_mask=None,
@@ -162,6 +147,13 @@ class Transformer(pl.LightningModule):
         if src.size(1) != tgt.size(1):
             raise RuntimeError("the batch number of src and tgt must be equal")
 
+        src_mask = None
+        tgt_mask = self.generate_square_subsequent_mask(tgt.size(0)).to(src.device)
+        memory_mask = None
+        src_key_padding_mask = (src == self.padding_idx).transpose(0, 1).to(src.device)
+        tgt_key_padding_mask = (tgt == self.padding_idx).transpose(0, 1).to(src.device)
+        memory_key_padding_mask = None
+
         src = self.src_embed(src)
         tgt = self.tgt_embed(tgt)
 
@@ -172,7 +164,7 @@ class Transformer(pl.LightningModule):
         output, attn_weights = self.decoder(tgt, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
                                             tgt_key_padding_mask=tgt_key_padding_mask,
                                             memory_key_padding_mask=memory_key_padding_mask)
-        # return output, attn_weights
+
         return self.generator(output)
 
     def _reset_parameters(self):
@@ -182,13 +174,18 @@ class Transformer(pl.LightningModule):
             if p.dim() > 1:
                 xavier_uniform_(p)
 
+    def generate_square_subsequent_mask(self, sz):
+        """Generate a square mask for the sequence. The masked positions are filled with float('-inf').
+            Unmasked positions are filled with float(0.0).
+        """
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
+
     def training_step(self, batch, batch_nb):
         # REQUIRED
 
-        batch = self.fullfil(batch)
-        logits = self.forward(batch.src, batch.tgt[:-1], src_mask=batch.src_mask, tgt_mask=batch.tgt_mask,
-                              memory_mask=batch.memory_mask, src_key_padding_mask=batch.src_key_padding_mask,
-                              tgt_key_padding_mask=batch.tgt_key_padding_mask, memory_key_padding_mask=batch.memory_key_padding_mask)
+        logits = self.forward(batch.src, batch.tgt[:-1])
 
         ids = torch.argmax(logits, dim=-1)
         translations = self.restore(ids)
@@ -204,12 +201,9 @@ class Transformer(pl.LightningModule):
 
     def validation_step(self, batch, batch_nb):
         # OPTIONAL
-        batch = self.fullfil(batch)
         with torch.no_grad():
-            logits = self.forward(batch.src, batch.tgt[:-1], src_mask=batch.src_mask, tgt_mask=batch.tgt_mask,
-                                  memory_mask=batch.memory_mask, src_key_padding_mask=batch.src_key_padding_mask,
-                                  tgt_key_padding_mask=batch.tgt_key_padding_mask, memory_key_padding_mask=batch.memory_key_padding_mask)
-        # print(logits.shape)
+            logits = self.forward(batch.src, batch.tgt[:-1])
+
         ids = torch.argmax(logits, dim=-1)
         translations = self.restore(ids)
         references = self.restore(batch.tgt[1:])
@@ -255,11 +249,11 @@ class Transformer(pl.LightningModule):
             self._reset_parameters()
 
         train_iter = data.BucketIterator(
-            dataset=mt_train, batch_size=1024,
+            dataset=mt_train, batch_size=self.batch_size,
             batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
             sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
 
-        return BatchIterator(train_iter, self.padding_idx)
+        return BatchIterator(train_iter)
 
     @pl.data_loader
     def val_dataloader(self):
@@ -270,11 +264,11 @@ class Transformer(pl.LightningModule):
             fields=(('src', self.field), ('tgt', self.field)))
 
         dev_iter = data.BucketIterator(
-            dataset=mt_dev, batch_size=1024,
+            dataset=mt_dev, batch_size=self.batch_size,
             batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
             sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
 
-        return BatchIterator(dev_iter, self.padding_idx)
+        return BatchIterator(dev_iter)
 
     @pl.data_loader
     def test_dataloader(self):
@@ -288,14 +282,7 @@ class Transformer(pl.LightningModule):
             batch_size_fn=lambda ex, bs, sz: sz + len(ex.src),
             sort_key=lambda x: data.interleave_keys(len(x.src), len(x.tgt)))
 
-        return BatchIterator(test_iter, self.padding_idx)
-
-    def fullfil(self, batch):
-
-        # print(batch.src.shape, batch.src_key_padding_mask.shape)
-        # print(batch.tgt.shape, batch.tgt_key_padding_mask.shape)
-
-        return batch
+        return BatchIterator(test_iter)
 
     def restore(self, ids):
         """
