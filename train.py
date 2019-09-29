@@ -18,7 +18,7 @@ if __name__ == "__main__":
                       print_weights_summary=False,
                       accumulate_grad_batches=2,
                       checkpoint_callback=ModelCheckpoint(filepath=root_dir / 'output' / 'models'),
-                      early_stop_callback=EarlyStopping(patience=10)
+                      early_stop_callback=EarlyStopping(monitor='avg_val_loss', patience=10)
                       )
 
     trainer.fit(model)
